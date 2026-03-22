@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Days Between</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <button class="tb-nav-btn" id="btnBack"  title="Back (Alt+←)"    disabled>&#8592;</button>
+      <button class="tb-nav-btn" id="btnFwd"   title="Forward (Alt+→)"  disabled>&#8594;</button>
+      <div class="titlebar-logo">D</div>
+      <span class="titlebar-name">DAYS BETWEEN</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="tb-icon-btn" id="btnHelp"     title="Keyboard shortcuts (?)">&#63;</button>
+      <button class="tb-icon-btn" id="btnSettings" title="Settings">&#9881;</button>
+      <button class="tb-icon-btn" id="btnMini"     title="Mini Player">&#8862;</button>
+      <button class="btn-min"   title="Minimize">&#8722;</button>
+      <button class="btn-max"   title="Maximize">&#9633;</button>
+      <button class="btn-close" title="Close">&#10005;</button>
+    </div>
+  </div>
+
+  <!-- App body -->
+  <div class="app-body" id="appBody">
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="source-tabs">
+        <button class="source-tab" data-source="relisten">Relisten</button>
+        <button class="source-tab" data-source="nugs">Nugs</button>
+      </div>
+      <div class="sidebar-search">
+        <input id="artistSearch" type="text" placeholder="Search artists…" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="sidebar-nav">
+        <div class="nav-row">
+          <button class="nav-btn active" data-tab="artists">Artists</button>
+          <button class="nav-btn" data-tab="today">Today</button>
+          <button class="nav-btn" data-tab="trending">Trending</button>
+          <button class="nav-btn" data-tab="tapes">Tapes</button>
+        </div>
+        <div class="nav-row">
+          <button class="nav-btn" data-tab="saved">Saved</button>
+          <button class="nav-btn" data-tab="history">History</button>
+          <button class="nav-btn" data-tab="stats">Stats</button>
+        </div>
+      </div>
+      <div class="artist-list" id="artistList"></div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+      <div class="breadcrumb" id="breadcrumb">
+        <button class="search-toggle" id="searchToggle" title="Global search">&#128269;</button>
+        <div class="search-inline" id="searchInline" style="display:none">
+          <input id="searchInput" type="text" placeholder="Search artists, shows, venues…" autocomplete="off" spellcheck="false">
+          <button class="search-close" id="searchClose">&#10005;</button>
+        </div>
+      </div>
+      <div class="content-inner" id="contentInner"></div>
+    </div>
+
+  </div>
+
+  <!-- Concert Companion panel -->
+  <div class="companion-panel" id="companionPanel">
+    <div class="companion-header">
+      <span class="companion-title">Recording Info</span>
+      <button class="companion-close" id="companionClose">&#10005;</button>
+    </div>
+    <div class="companion-body" id="companionBody"></div>
+  </div>
+
+  <!-- Queue panel -->
+  <div class="queue-panel" id="queuePanel">
+    <div class="queue-header">
+      <span class="queue-title">Up Next</span>
+      <button class="queue-close" id="queueClose">&#10005;</button>
+    </div>
+    <div class="queue-list" id="queueList"></div>
+  </div>
+
+  <!-- Player bar -->
+  <div class="player">
+    <!-- Left: art + track info -->
+    <div class="player-left">
+      <div class="player-art" id="playerArt" title="Now Playing"></div>
+      <div class="eq-bars" id="eqBars">
+        <span class="eq-bar"></span><span class="eq-bar"></span>
+        <span class="eq-bar"></span><span class="eq-bar"></span>
+        <span class="eq-bar"></span>
+      </div>
+      <div class="player-track">
+        <span class="player-title" id="playerTitle">No track selected</span>
+        <span class="player-sub"   id="playerSub"></span>
+      </div>
+    </div>
+
+    <!-- Center: controls + progress -->
+    <div class="player-center">
+      <div class="player-controls">
+        <button class="ctrl-btn" id="btnPrev" title="Previous">&#9664;&#9664;</button>
+        <button class="ctrl-btn ctrl-play" id="btnPlay" title="Play / Pause">&#9654;</button>
+        <button class="ctrl-btn" id="btnNext" title="Next">&#9654;&#9654;</button>
+      </div>
+      <div class="player-progress">
+        <span class="time" id="timeCur">0:00</span>
+        <div class="progress-bar" id="progressBar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <span class="time" id="timeDur">0:00</span>
+      </div>
+    </div>
+
+    <!-- Right: extras + volume -->
+    <div class="player-right">
+      <div class="player-extra">
+        <button class="ctrl-btn ctrl-sm" id="btnShuffle" title="Shuffle">&#8644;</button>
+        <button class="ctrl-btn ctrl-sm" id="btnRepeat"  title="Repeat">&#8635;</button>
+        <button class="ctrl-btn ctrl-sm" id="btnRadio"   title="Artist Radio">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <circle cx="12" cy="17" r="2" fill="currentColor" stroke="none"/>
+            <path d="M9 14a4 4 0 016 0"/><path d="M6 11a8 8 0 0112 0"/><path d="M3 8a12 12 0 0118 0"/>
+          </svg>
+        </button>
+        <button class="ctrl-btn ctrl-sm" id="btnQueue"   title="Queue">&#8801;</button>
+        <button class="ctrl-btn ctrl-sm" id="btnCast" title="Cast">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M1 18v3h3a3 3 0 00-3-3zm0-4v2a7 7 0 017 7h2a9 9 0 00-9-9zm0-4v2a11 11 0 0111 11h2a13 13 0 00-13-13zm20-7H3C1.9 3 1 3.9 1 5v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/>
+          </svg>
+        </button>
+      </div>
+      <div class="player-volume">
+        <span class="vol-icon" id="volIcon">&#128266;</span>
+        <input id="volumeSlider" type="range" min="0" max="100" value="80">
+      </div>
+      <button class="ctrl-btn ctrl-sm" id="btnSleep" title="Sleep Timer">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+      </button>
+      <button class="mini-expand-btn" id="btnExpand" title="Expand to full view">&#x2922;</button>
+    </div>
+  </div>
+
+  <!-- Mini player drag handle (only visible in mini mode) -->
+  <div class="mini-restore" id="miniRestore" style="display:none">
+    <button id="btnFullMode" style="display:none"></button>
+  </div>
+
+  <audio id="audioEl"   preload="auto"></audio>
+  <audio id="preloadEl" preload="auto" style="display:none"></audio>
+
+  <!-- Tape track picker -->
+  <div id="tapePicker" class="tape-picker" style="display:none">
+    <div id="tapePickerList"></div>
+    <div class="tape-picker-new" id="tapePickerNew">+ New Tape</div>
+  </div>
+
+  <!-- Context menu -->
+  <div id="ctxMenu" class="ctx-menu" style="display:none">
+    <div class="ctx-item" id="ctxCopyUrl">Copy Stream URL</div>
+    <div class="ctx-item" id="ctxAddTape">Add to Tape…</div>
+  </div>
+
+  <!-- Sleep timer picker -->
+  <div id="sleepPicker" class="sleep-picker" style="display:none">
+    <div class="sleep-picker-panel">
+      <div class="sleep-picker-header">
+        <span>Sleep Timer</span>
+        <button id="sleepPickerClose">&#10005;</button>
+      </div>
+      <div class="sleep-picker-options">
+        <button class="sleep-opt" data-mins="15">15 min</button>
+        <button class="sleep-opt" data-mins="30">30 min</button>
+        <button class="sleep-opt" data-mins="60">60 min</button>
+        <button class="sleep-opt" data-mins="90">90 min</button>
+      </div>
+      <button class="sleep-cancel-btn" id="sleepCancelBtn" style="display:none">Cancel timer</button>
+    </div>
+  </div>
+
+  <!-- Cast device picker -->
+  <div id="castPicker" class="cast-picker" style="display:none">
+    <div class="cast-picker-panel">
+      <div class="cast-picker-header">
+        <span>Cast to…</span>
+        <button id="castPickerClose">&#10005;</button>
+      </div>
+      <div id="castPickerList" class="cast-picker-list"></div>
+    </div>
+  </div>
+
+  <!-- Now Playing overlay -->
+  <div id="nowPlayingOverlay" class="npo" style="display:none">
+    <div class="npo-bg" id="npoBg"></div>
+    <button class="npo-close" id="npoClose">&#10005;</button>
+    <div class="npo-inner">
+      <div class="npo-art-wrap" id="npoArtWrap"></div>
+      <div class="npo-title" id="npoTitle">No track selected</div>
+      <div class="npo-sub"   id="npoSub"></div>
+      <div class="npo-progress-wrap">
+        <span class="npo-time" id="npoTimeCur">0:00</span>
+        <div class="npo-bar" id="npoBar"><div class="npo-fill" id="npoFill"></div></div>
+        <span class="npo-time" id="npoTimeDur">0:00</span>
+      </div>
+      <div class="npo-controls">
+        <button class="npo-btn npo-btn-sm" id="npoPrev" title="Previous">&#9664;&#9664;</button>
+        <button class="npo-btn npo-btn-lg" id="npoPlay" title="Play / Pause">&#9654;</button>
+        <button class="npo-btn npo-btn-sm" id="npoNext" title="Next">&#9654;&#9654;</button>
+      </div>
+      <div class="npo-extras">
+        <button class="npo-extra-btn" id="npoShuffle" title="Shuffle">&#8644;</button>
+        <button class="npo-extra-btn" id="npoRepeat"  title="Repeat">&#8635;</button>
+        <input  class="npo-volume" id="npoVolume" type="range" min="0" max="100" value="80">
+      </div>
+      <div class="npo-setlist" id="npoSetlist"></div>
+    </div>
+  </div>
+
+  <!-- Keyboard shortcuts modal -->
+  <div id="shortcutsModal" class="shortcuts-modal" style="display:none">
+    <div class="shortcuts-backdrop"></div>
+    <div class="shortcuts-box">
+      <div class="shortcuts-header">
+        <span class="shortcuts-title">Keyboard Shortcuts</span>
+        <button class="shortcuts-close" id="shortcutsClose">&#10005;</button>
+      </div>
+      <div class="shortcuts-grid">
+        <div class="shortcuts-section">
+          <div class="shortcuts-section-label">Playback</div>
+          <div class="shortcut-row"><kbd>Space</kbd><span>Play / Pause</span></div>
+          <div class="shortcut-row"><kbd>←</kbd><span>Previous track</span></div>
+          <div class="shortcut-row"><kbd>→</kbd><span>Next track</span></div>
+          <div class="shortcut-row"><kbd>S</kbd><span>Toggle shuffle</span></div>
+          <div class="shortcut-row"><kbd>R</kbd><span>Toggle repeat</span></div>
+        </div>
+        <div class="shortcuts-section">
+          <div class="shortcuts-section-label">Navigation</div>
+          <div class="shortcut-row"><kbd>Alt ←</kbd><span>Go back</span></div>
+          <div class="shortcut-row"><kbd>Alt →</kbd><span>Go forward</span></div>
+          <div class="shortcut-row"><kbd>/</kbd><span>Global search</span></div>
+          <div class="shortcut-row"><kbd>Q</kbd><span>Toggle queue</span></div>
+          <div class="shortcut-row"><kbd>M</kbd><span>Mini player</span></div>
+        </div>
+        <div class="shortcuts-section">
+          <div class="shortcuts-section-label">App</div>
+          <div class="shortcut-row"><kbd>?</kbd><span>This screen</span></div>
+          <div class="shortcut-row"><kbd>Esc</kbd><span>Close overlay</span></div>
+          <div class="shortcut-row"><kbd>↑ / ↓</kbd><span>Volume</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="hls.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

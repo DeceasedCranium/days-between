@@ -1,0 +1,13 @@
+{
+  "name": "days-between",
+  "version": "1.0.0",
+  "description": "Days Between — Live music streaming desktop app, powered by Relisten",
+  "main": "app/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "castv2-client": "^0.2.0",
+    "multicast-dns": "^7.2.5"
+  }
+}

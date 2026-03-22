@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Background -->
+  <rect width="256" height="256" rx="52" fill="#0d0f14"/>
+  <!-- Headphone arc -->
+  <path d="M128 60C84 60 48 96 48 140v8h4V140c0-41.9 34.1-76 76-76s76 34.1 76 76v8h4v-8c0-44-36-80-80-80z" fill="#e94560"/>
+  <!-- Left ear cup -->
+  <rect x="32" y="140" width="36" height="56" rx="10" fill="#e94560"/>
+  <!-- Right ear cup -->
+  <rect x="188" y="140" width="36" height="56" rx="10" fill="#e94560"/>
+  <!-- Center dot accent -->
+  <circle cx="128" cy="172" r="8" fill="#ff6b81" opacity="0.6"/>
+</svg>
