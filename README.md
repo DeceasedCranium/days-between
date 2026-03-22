@@ -72,6 +72,13 @@ All user data is stored locally:
 - Settings and Last.fm session → `localStorage`
 - No telemetry, no accounts, no cloud sync
 
+## Credits
+
+- **[Relisten](https://github.com/RelistenNet/relisten-web)** — open API powering all Relisten content
+- **[nugs.net](https://nugs.net)** — official source for nugs streaming content
+- **[hls.js](https://github.com/video-dev/hls.js)** — HLS streaming library (Apache 2.0)
+- **[castv2-client](https://github.com/thibauts/node-castv2-client)** — Chromecast protocol (MIT)
+
 ## License
 
 MIT
