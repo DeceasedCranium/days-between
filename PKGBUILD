@@ -14,6 +14,8 @@ prepare() {
     cp -r "${startdir}/app"          "${srcdir}/"
     cp    "${startdir}/package.json" "${srcdir}/"
     cp -r "${startdir}/assets"       "${srcdir}/"
+    cp -r "${startdir}/node_modules" "${srcdir}/"
+    [[ -f "${startdir}/config.js" ]] && cp "${startdir}/config.js" "${srcdir}/"
 }
 
 package() {
@@ -21,6 +23,8 @@ package() {
     cp -r "${srcdir}/app"          "${pkgdir}/opt/${pkgname}/"
     cp    "${srcdir}/package.json" "${pkgdir}/opt/${pkgname}/"
     cp -r "${srcdir}/assets"       "${pkgdir}/opt/${pkgname}/"
+    cp -r "${srcdir}/node_modules" "${pkgdir}/opt/${pkgname}/"
+    [[ -f "${srcdir}/config.js" ]] && cp "${srcdir}/config.js" "${pkgdir}/opt/${pkgname}/"
 
     # Launcher — finds whatever electron version is installed
     install -Dm755 /dev/stdin "${pkgdir}/usr/bin/${pkgname}" << 'SCRIPT'
