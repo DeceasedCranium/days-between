@@ -250,6 +250,42 @@ ipcMain.handle('cast:stop',  async () => {
   return { ok: true };
 });
 
+// ── MPRIS (Linux media controls) ────────────────────────────────────────────
+let mprisPlayer = null;
+try {
+  const mpris = require('mpris-service');
+  mprisPlayer = mpris({
+    name: 'days-between',
+    identity: 'Days Between',
+    supportedUriSchemes: ['https'],
+    supportedMimeTypes: ['audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/mp4'],
+    supportedInterfaces: ['player'],
+  });
+  mprisPlayer.playbackStatus = 'Stopped';
+  mprisPlayer.canPlay       = true;
+  mprisPlayer.canPause      = true;
+  mprisPlayer.canGoNext     = true;
+  mprisPlayer.canGoPrevious = true;
+  mprisPlayer.canSeek       = false;
+
+  const fwd = cmd => () => win?.webContents.send('mpris', cmd);
+  mprisPlayer.on('play',      fwd('play'));
+  mprisPlayer.on('pause',     fwd('pause'));
+  mprisPlayer.on('playpause', fwd('playpause'));
+  mprisPlayer.on('stop',      fwd('stop'));
+  mprisPlayer.on('next',      fwd('next'));
+  mprisPlayer.on('previous',  fwd('previous'));
+
+  ipcMain.on('mpris:update', (_, data) => {
+    if (!mprisPlayer) return;
+    if (data.status)   mprisPlayer.playbackStatus = data.status;
+    if (data.metadata) mprisPlayer.metadata       = data.metadata;
+  });
+} catch {
+  // mpris-service not installed — media key integration unavailable
+  ipcMain.on('mpris:update', () => {});
+}
+
 // Image proxy — fetch image from main process via net.request (bypasses renderer CORS)
 ipcMain.handle('fetch-image', (_, url, bearerToken) => {
   const { net } = require('electron');

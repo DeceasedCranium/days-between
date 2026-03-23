@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('ipc', {
   castSeek:     (secs)                    => ipcRenderer.invoke('cast:seek', secs),
   castStop:     ()                        => ipcRenderer.invoke('cast:stop'),
   openUrl:      (url)                     => ipcRenderer.send('open-url', url),
+  mprisUpdate:  (data)                    => ipcRenderer.send('mpris:update', data),
+  onMpris:      (fn)                      => ipcRenderer.on('mpris', (_, cmd) => fn(cmd)),
   getLfmKey:    ()                        => ipcRenderer.invoke('config:lfm-key'),
   lfmGetToken:  ()                        => ipcRenderer.invoke('lastfm:get-token'),
   lfmGetSession:(token)                   => ipcRenderer.invoke('lastfm:get-session', token),

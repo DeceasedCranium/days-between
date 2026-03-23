@@ -48,6 +48,7 @@
         <div class="nav-row">
           <button class="nav-btn" data-tab="saved">Saved</button>
           <button class="nav-btn" data-tab="history">History</button>
+          <button class="nav-btn" data-tab="bookmarks">Bookmarks</button>
           <button class="nav-btn" data-tab="stats">Stats</button>
         </div>
       </div>
@@ -81,9 +82,16 @@
   <div class="queue-panel" id="queuePanel">
     <div class="queue-header">
       <span class="queue-title">Up Next</span>
-      <button class="queue-close" id="queueClose">&#10005;</button>
+      <div class="queue-header-actions">
+        <button class="queue-save-btn" id="queueSave" title="Save queue">💾</button>
+        <button class="queue-close" id="queueClose">&#10005;</button>
+      </div>
     </div>
     <div class="queue-list" id="queueList"></div>
+    <div class="saved-queues-section" id="savedQueuesSection" style="display:none">
+      <div class="saved-queues-title">Saved Queues</div>
+      <div id="savedQueuesList"></div>
+    </div>
   </div>
 
   <!-- Player bar -->
@@ -216,8 +224,9 @@
         <button class="npo-btn npo-btn-sm" id="npoNext" title="Next">&#9654;&#9654;</button>
       </div>
       <div class="npo-extras">
-        <button class="npo-extra-btn" id="npoShuffle" title="Shuffle">&#8644;</button>
-        <button class="npo-extra-btn" id="npoRepeat"  title="Repeat">&#8635;</button>
+        <button class="npo-extra-btn" id="npoShuffle"   title="Shuffle">&#8644;</button>
+        <button class="npo-extra-btn" id="npoRepeat"    title="Repeat">&#8635;</button>
+        <button class="npo-extra-btn" id="npoBookmark"  title="Bookmark this moment">🔖</button>
         <input  class="npo-volume" id="npoVolume" type="range" min="0" max="100" value="80">
       </div>
       <div class="npo-setlist" id="npoSetlist"></div>

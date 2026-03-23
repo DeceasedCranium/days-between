@@ -39,21 +39,54 @@ function artistColor(name) {
   return `hsl(${Math.abs(h) % 360}, 45%, 28%)`;
 }
 
-// Wikipedia artist image — no API key, no auth, free
-const _wikiImgCache = new Map();
-async function lastfmArtistImage(name) {
+// Wikipedia artist data — no API key, no auth, free
+const _wikiCache = new Map();
+async function wikiArtistData(name) {
   if (!name) return null;
-  if (_wikiImgCache.has(name)) return _wikiImgCache.get(name);
+  if (_wikiCache.has(name)) return _wikiCache.get(name);
   try {
     const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(name)}`;
     const data = await fetch(url, { headers: { 'Accept': 'application/json' } }).then(r => r.json());
-    const img = data?.thumbnail?.source ?? data?.originalimage?.source ?? null;
-    _wikiImgCache.set(name, img);
-    return img;
+    const result = {
+      image:       data?.thumbnail?.source ?? data?.originalimage?.source ?? null,
+      bio:         data?.extract ?? null,
+      description: data?.description ?? null,
+      wikiUrl:     data?.content_urls?.desktop?.page ?? null,
+    };
+    _wikiCache.set(name, result);
+    return result;
   } catch {
-    _wikiImgCache.set(name, null);
+    _wikiCache.set(name, null);
     return null;
   }
+}
+async function lastfmArtistImage(name) {
+  return (await wikiArtistData(name))?.image ?? null;
+}
+
+async function injectArtistBio(artistName) {
+  const bioEl = document.getElementById('artistBioCard');
+  if (!bioEl) return;
+  const [wiki, lfmData] = await Promise.all([
+    wikiArtistData(artistName),
+    fetch(`https://ws.audioscrobbler.com/2.0/?method=artist.getInfo&artist=${encodeURIComponent(artistName)}&api_key=f468569623823ed33e83c24c3dcc8b79&format=json`)
+      .then(r => r.json()).catch(() => null),
+  ]);
+  const bio     = wiki?.bio ?? null;
+  const desc    = wiki?.description ?? null;
+  const wikiUrl = wiki?.wikiUrl ?? null;
+  const lfmUrl  = lfmData?.artist?.url ?? null;
+  if (!bio && !wikiUrl && !lfmUrl) { bioEl.remove(); return; }
+  bioEl.classList.remove('loading');
+  bioEl.innerHTML = `
+    ${desc ? `<div class="artist-bio-desc">${esc(desc)}</div>` : ''}
+    ${bio  ? `<p class="artist-bio-text">${esc(bio)}</p>` : ''}
+    <div class="artist-bio-links">
+      ${wikiUrl ? `<button class="bio-link-btn" data-url="${esc(wikiUrl)}">Wikipedia</button>` : ''}
+      ${lfmUrl  ? `<button class="bio-link-btn" data-url="${esc(lfmUrl)}">Last.fm</button>`   : ''}
+    </div>`;
+  bioEl.querySelectorAll('.bio-link-btn').forEach(btn =>
+    btn.addEventListener('click', () => window.ipc?.openUrl(btn.dataset.url)));
 }
 
 function setPlayerArt(artist, artUrl) {
@@ -351,6 +384,58 @@ const store = {
     if (hist.length > 100) hist.length = 100;
     localStorage.setItem('db-history', JSON.stringify(hist));
   },
+  // Personal show ratings 1-5
+  getRatings()  { try { return JSON.parse(localStorage.getItem('db-ratings') || '{}'); } catch { return {}; } },
+  getRating(artistSlug, date) { return this.getRatings()[`${artistSlug}:${date}`] ?? null; },
+  setRating(artistSlug, date, rating) {
+    const all = this.getRatings();
+    if (rating == null) delete all[`${artistSlug}:${date}`];
+    else all[`${artistSlug}:${date}`] = rating;
+    localStorage.setItem('db-ratings', JSON.stringify(all));
+  },
+  // "I was there" attendance — stores rich objects
+  getAttended() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('db-attended') || '[]');
+      return raw.map(item => {
+        if (typeof item === 'string') {
+          const colonIdx = item.indexOf(':');
+          const artistSlug = item.slice(0, colonIdx);
+          const date = item.slice(colonIdx + 1);
+          return { artistSlug, artistName: artistSlug, date, venueName: '', venueLocation: '', markedAt: '' };
+        }
+        return item;
+      });
+    } catch { return []; }
+  },
+  isAttended(artistSlug, date) { return this.getAttended().some(a => a.artistSlug === artistSlug && a.date === date); },
+  toggleAttended(artist, show) {
+    const all = this.getAttended();
+    const idx = all.findIndex(a => a.artistSlug === artist.slug && a.date === show.display_date);
+    if (idx >= 0) { all.splice(idx, 1); }
+    else {
+      all.unshift({
+        artistSlug: artist.slug, artistName: artist.name,
+        date: show.display_date, venueName: show.venue?.name ?? '',
+        venueLocation: show.venue?.location ?? '', markedAt: new Date().toISOString(),
+      });
+    }
+    localStorage.setItem('db-attended', JSON.stringify(all));
+    return idx < 0;
+  },
+  // Bookmarks (timestamp pins)
+  getBookmarks()  { try { return JSON.parse(localStorage.getItem('db-bookmarks') || '[]'); } catch { return []; } },
+  addBookmark(b)  {
+    const all = this.getBookmarks();
+    all.unshift(b);
+    if (all.length > 200) all.length = 200;
+    localStorage.setItem('db-bookmarks', JSON.stringify(all));
+  },
+  removeBookmark(idx) {
+    const all = this.getBookmarks();
+    all.splice(idx, 1);
+    localStorage.setItem('db-bookmarks', JSON.stringify(all));
+  },
 };
 
 /* ── Settings store ────────────────────────────── */
@@ -473,6 +558,7 @@ const audio        = $('audioEl');
 const preloadAudio = $('preloadEl');
 let playing = false;
 const cast = { active: false, paused: false, deviceName: null };
+
 
 // ── Artist Radio ──────────────────────────────────────────────────────────
 let radioMode = false;
@@ -612,6 +698,16 @@ const player = {
     window.ipc?.send('player-update', { title: `${track.title} — ${artist?.name}` });
     store.pushHistory(track, artist, show);
     lfm.onTrackStart(track, artist, show);
+    window.ipc?.mprisUpdate({
+      status: 'Playing',
+      metadata: {
+        'mpris:trackid':   `/tracks/${track.id ?? track.slug ?? 0}`,
+        'mpris:length':    (track.duration ?? 0) * 1000000,
+        'xesam:title':     track.title ?? 'Unknown',
+        'xesam:artist':    [artist?.name ?? ''],
+        'xesam:album':     show?.display_date ?? '',
+      },
+    });
     setPlayerArt(artist);
     if (nowPlayingOpen) syncNowPlayingContent();
     if (settings.getKey('notifications', false)) {
@@ -919,6 +1015,22 @@ $('npoBar').addEventListener('click', e => {
 audio.addEventListener('play',  () => { if (nowPlayingOpen && $('npoPlay')) $('npoPlay').innerHTML = '&#9646;&#9646;'; });
 audio.addEventListener('pause', () => { if (nowPlayingOpen && $('npoPlay')) $('npoPlay').innerHTML = '&#9654;'; });
 
+// Bookmark a moment
+$('npoBookmark').addEventListener('click', () => {
+  const track = state.queue[state.queueIdx];
+  if (!track || !state.artist) { showToast('Nothing playing'); return; }
+  const pos = Math.floor(audio.currentTime);
+  store.addBookmark({
+    artistSlug: state.artist.slug ?? '',
+    artistName: state.artist.name ?? '',
+    showDate:   state.show?.display_date ?? '',
+    trackTitle: track.title ?? 'Unknown Track',
+    position:   pos,
+    savedAt:    new Date().toISOString(),
+  });
+  showToast(`🔖 Bookmarked at ${fmt(pos)}`);
+});
+
 // Open overlay by clicking the player art
 $('playerArt').addEventListener('click', openNowPlaying);
 
@@ -982,10 +1094,23 @@ $('btnQueue').addEventListener('click', () => {
   if (open) renderQueuePanel();
 });
 
+
 $('queueClose').addEventListener('click', () => {
   $('queuePanel').classList.remove('open');
   $('appBody').classList.remove('queue-open');
   $('btnQueue').classList.remove('active');
+});
+
+$('queueSave').addEventListener('click', () => {
+  if (!state.queue.length) { showToast('Queue is empty'); return; }
+  const name = prompt('Name this queue:', `Queue — ${new Date().toLocaleDateString()}`);
+  if (!name) return;
+  const qs = getSavedQueues();
+  qs.unshift({ name, tracks: [...state.queue], savedAt: new Date().toISOString() });
+  if (qs.length > 20) qs.length = 20;
+  saveQueues(qs);
+  renderSavedQueues();
+  showToast(`Saved: ${name}`);
 });
 
 $('btnCast').addEventListener('click', async () => {
@@ -1107,26 +1232,82 @@ function closeCompanion() {
 
 $('companionClose').addEventListener('click', closeCompanion);
 
+function getSavedQueues() { try { return JSON.parse(localStorage.getItem('db-saved-queues') || '[]'); } catch { return []; } }
+function saveQueues(qs)  { localStorage.setItem('db-saved-queues', JSON.stringify(qs)); }
+
+function renderSavedQueues() {
+  const qs = getSavedQueues();
+  const sec = $('savedQueuesSection');
+  if (!qs.length) { sec.style.display = 'none'; return; }
+  sec.style.display = 'block';
+  $('savedQueuesList').innerHTML = qs.map((q, i) => `
+    <div class="saved-queue-row">
+      <div class="saved-queue-info" data-qi="${i}">
+        <div class="saved-queue-name">${esc(q.name)}</div>
+        <div class="saved-queue-meta">${q.tracks.length} tracks</div>
+      </div>
+      <button class="saved-queue-del" data-qi="${i}" title="Delete">✕</button>
+    </div>`).join('');
+  $('savedQueuesList').querySelectorAll('.saved-queue-info').forEach(el =>
+    el.addEventListener('click', () => {
+      const q = getSavedQueues()[+el.dataset.qi];
+      if (!q) return;
+      state.queue = q.tracks; state.queueIdx = 0;
+      player._playQueued(0);
+      showToast(`Loaded: ${q.name}`);
+    }));
+  $('savedQueuesList').querySelectorAll('.saved-queue-del').forEach(btn =>
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const qs = getSavedQueues(); qs.splice(+btn.dataset.qi, 1); saveQueues(qs);
+      renderSavedQueues();
+    }));
+}
+
+let dragSrcIdx = null;
+
 function renderQueuePanel() {
   if (!$('queuePanel').classList.contains('open')) return;
   const q = state.queue;
   if (!q.length) {
     $('queueList').innerHTML = `<div class="loading" style="height:60px;font-size:12px">No tracks queued</div>`;
-    return;
+    renderSavedQueues(); return;
   }
   $('queueList').innerHTML = q.map((t, i) => `
-    <div class="queue-item ${i === state.queueIdx ? 'current' : ''}" data-qi="${i}">
+    <div class="queue-item ${i === state.queueIdx ? 'current' : ''}" data-qi="${i}" draggable="true">
+      <div class="queue-drag-handle">⠿</div>
       <div class="queue-item-num">${i === state.queueIdx ? '▶' : i + 1}</div>
       <div class="queue-item-name">${esc(t.title || 'Unknown')}</div>
       <div class="queue-item-dur">${fmt(t.duration)}</div>
     </div>`).join('');
-  $('queueList').querySelectorAll('.queue-item').forEach(el =>
-    el.addEventListener('click', () => {
+
+  $('queueList').querySelectorAll('.queue-item').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target.classList.contains('queue-drag-handle')) return;
       state.queueIdx = parseInt(el.dataset.qi);
       player._playQueued(state.queueIdx);
-    }));
+    });
+    el.addEventListener('dragstart', () => { dragSrcIdx = parseInt(el.dataset.qi); el.classList.add('dragging'); });
+    el.addEventListener('dragend',   () => el.classList.remove('dragging'));
+    el.addEventListener('dragover',  e => { e.preventDefault(); el.classList.add('drag-over'); });
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', e => {
+      e.preventDefault(); el.classList.remove('drag-over');
+      const destIdx = parseInt(el.dataset.qi);
+      if (dragSrcIdx === null || dragSrcIdx === destIdx) return;
+      const moved = state.queue.splice(dragSrcIdx, 1)[0];
+      state.queue.splice(destIdx, 0, moved);
+      if (state.queueIdx === dragSrcIdx) state.queueIdx = destIdx;
+      else if (dragSrcIdx < state.queueIdx && destIdx >= state.queueIdx) state.queueIdx--;
+      else if (dragSrcIdx > state.queueIdx && destIdx <= state.queueIdx) state.queueIdx++;
+      dragSrcIdx = null;
+      renderQueuePanel();
+    });
+  });
+
   const cur = $('queueList').querySelector('.current');
   if (cur) cur.scrollIntoView({ block: 'nearest' });
+  renderSavedQueues();
 }
 
 /* ── Cast session management ─────────────────── */
@@ -1517,13 +1698,21 @@ async function viewWelcome() {
       <h2>Days Between</h2>
       <p>Stream 70,000+ live concert recordings from Phish, Grateful Dead, and thousands more.
          Powered by <strong style="color:var(--accent)">Relisten</strong>.</p>
-      <button class="action-btn primary" id="btnWelcomeRandom">🎲 Random Show</button>
+      <div class="welcome-actions">
+        <button class="action-btn primary" id="btnWelcomeRandom">🎲 Random Show</button>
+        <button class="action-btn" id="btnWelcomeRecent">🆕 Recently Added</button>
+      </div>
+      <div class="welcome-sotd" id="welcomeSotd">
+        <div class="welcome-otd-title">🎵 Show of the Day</div>
+        <div id="sotdContent"><div class="loading" style="height:50px;font-size:12px"><div class="spinner"></div></div></div>
+      </div>
       <div class="welcome-otd">
         <div class="welcome-otd-title">On This Day — ${esc(label)}</div>
         <div id="welcomeOtd"><div class="loading" style="height:60px;font-size:12px"><div class="spinner"></div>Loading…</div></div>
       </div>
     </div>`;
 
+  $('btnWelcomeRecent').addEventListener('click', () => viewRecent());
   $('btnWelcomeRandom').addEventListener('click', async () => {
     if (!state.artists.length) return;
     const artist = state.artists[Math.floor(Math.random() * state.artists.length)];
@@ -1536,6 +1725,39 @@ async function viewWelcome() {
       viewShow(artist, show.display_date);
     } catch(e) { showError(e.message); }
   });
+
+  // Show of the Day — deterministic pick from top shows, refreshes daily
+  (async () => {
+    try {
+      const today  = new Date().toISOString().slice(0, 10);
+      const cached = JSON.parse(localStorage.getItem('sotd') || 'null');
+      let sotd = (cached?.date === today) ? cached.show : null;
+      if (!sotd) {
+        const data  = await api.trending();
+        const shows = (data.shows ?? data ?? []).filter(s => s.artist_slug);
+        if (shows.length) {
+          const seed = today.replace(/-/g, '');
+          sotd = shows[parseInt(seed.slice(-4)) % shows.length];
+          localStorage.setItem('sotd', JSON.stringify({ date: today, show: sotd }));
+        }
+      }
+      if (!sotd) { $('welcomeSotd').style.display = 'none'; return; }
+      const artist = state.artists.find(a => a.slug === sotd.artist_slug) || { name: sotd.artist_slug, slug: sotd.artist_slug };
+      $('sotdContent').innerHTML = `
+        <div class="sotd-card" data-slug="${esc(sotd.artist_slug)}" data-date="${esc(sotd.display_date)}">
+          <div class="sotd-artist">${esc(artist.name)}</div>
+          <div class="sotd-meta">${esc(sotd.display_date)}${sotd.venue?.name ? ' · ' + esc(sotd.venue.name) : ''}${sotd.venue?.location ? ', ' + esc(sotd.venue.location) : ''}</div>
+          ${sotd.avg_rating ? `<div class="sotd-rating">${'★'.repeat(Math.round(sotd.avg_rating))} ${sotd.avg_rating.toFixed(1)}</div>` : ''}
+          <button class="action-btn primary sotd-play" style="margin-top:8px">▶ Play Show</button>
+        </div>`;
+      $('sotdContent').querySelector('.sotd-card').addEventListener('click', () => viewShow(artist, sotd.display_date));
+      $('sotdContent').querySelector('.sotd-play').addEventListener('click', async e => {
+        e.stopPropagation();
+        showLoading();
+        try { viewShow(artist, sotd.display_date); } catch {}
+      });
+    } catch { $('welcomeSotd').style.display = 'none'; }
+  })();
 
   try {
     const data  = await api.onDate(now.getMonth() + 1, now.getDate());
@@ -1629,6 +1851,99 @@ function viewHistory() {
       state.artist = artist;
       viewShow(artist, el.dataset.date);
     }));
+}
+
+/* ── Bookmarks ─────────────────────────────────── */
+function viewBookmarks(activeTab = 'bookmarks') {
+  nav.record(viewBookmarks, [activeTab]);
+  setBreadcrumb([{ label: 'Bookmarks' }]);
+
+  const bks      = store.getBookmarks();
+  const attended = store.getAttended();
+
+  function renderBookmarksTab() {
+    const container = $('bkTabContent');
+    if (!bks.length) {
+      container.innerHTML = `<div class="welcome" style="padding-top:40px"><div style="font-size:24px">🔖</div><h2>No bookmarks yet</h2><p>Open the Now Playing view and tap 🔖 to pin a moment.</p></div>`;
+      return;
+    }
+    container.innerHTML = `<div class="bk-list">
+      ${bks.map((b, i) => `
+        <div class="bk-row" data-idx="${i}" data-slug="${esc(b.artistSlug)}" data-date="${esc(b.showDate)}">
+          <div class="bk-icon">🔖</div>
+          <div class="bk-info">
+            <div class="bk-track">${esc(b.trackTitle)}</div>
+            <div class="bk-sub">${esc(b.artistName)} · ${esc(b.showDate)} · ${fmt(b.position)}</div>
+          </div>
+          <button class="bk-del" data-idx="${i}" title="Remove">✕</button>
+        </div>`).join('')}
+    </div>`;
+    container.querySelectorAll('.bk-row').forEach(row =>
+      row.addEventListener('click', e => {
+        if (e.target.classList.contains('bk-del')) return;
+        const slug = row.dataset.slug; const date = row.dataset.date;
+        if (!slug || !date) return;
+        const artist = state.artists.find(a => a.slug === slug) || { name: slug, slug };
+        viewShow(artist, date);
+      }));
+    container.querySelectorAll('.bk-del').forEach(btn =>
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        store.removeBookmark(+btn.dataset.idx);
+        renderBookmarksTab();
+      }));
+  }
+
+  function renderAttendedTab() {
+    const container = $('bkTabContent');
+    if (!attended.length) {
+      container.innerHTML = `<div class="welcome" style="padding-top:40px"><div style="font-size:24px">📍</div><h2>No shows marked yet</h2><p>Open any show and tap "📍 I Was There" to log it.</p></div>`;
+      return;
+    }
+    container.innerHTML = `<div class="bk-list">
+      ${attended.map((a, i) => `
+        <div class="bk-row" data-idx="${i}" data-slug="${esc(a.artistSlug)}" data-date="${esc(a.date)}">
+          <div class="bk-icon">📍</div>
+          <div class="bk-info">
+            <div class="bk-track">${esc(a.artistName)} — ${esc(a.date)}</div>
+            <div class="bk-sub">${esc(a.venueName)}${a.venueLocation ? ' · ' + esc(a.venueLocation) : ''}</div>
+          </div>
+          <button class="bk-del" data-idx="${i}" title="Remove">✕</button>
+        </div>`).join('')}
+    </div>`;
+    container.querySelectorAll('.bk-row').forEach(row =>
+      row.addEventListener('click', e => {
+        if (e.target.classList.contains('bk-del')) return;
+        const slug = row.dataset.slug; const date = row.dataset.date;
+        if (!slug || !date) return;
+        const artist = state.artists.find(a => a.slug === slug) || { name: slug, slug };
+        viewShow(artist, date);
+      }));
+    container.querySelectorAll('.bk-del').forEach(btn =>
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const all = store.getAttended();
+        all.splice(+btn.dataset.idx, 1);
+        localStorage.setItem('db-attended', JSON.stringify(all));
+        renderAttendedTab();
+      }));
+  }
+
+  $('contentInner').innerHTML = `
+    <div class="section-header">
+      <div><div class="section-title">Bookmarks</div></div>
+    </div>
+    <div class="bk-tabs">
+      <button class="bk-tab${activeTab === 'bookmarks' ? ' active' : ''}" data-t="bookmarks">🔖 Moments <span class="bk-count">${bks.length}</span></button>
+      <button class="bk-tab${activeTab === 'attended'  ? ' active' : ''}" data-t="attended">📍 I Was There <span class="bk-count">${attended.length}</span></button>
+    </div>
+    <div id="bkTabContent"></div>`;
+
+  if (activeTab === 'bookmarks') renderBookmarksTab();
+  else renderAttendedTab();
+
+  $('contentInner').querySelectorAll('.bk-tab').forEach(tab =>
+    tab.addEventListener('click', () => viewBookmarks(tab.dataset.t)));
 }
 
 /* ── Stats ─────────────────────────────────────── */
@@ -2156,10 +2471,12 @@ async function viewYears(artist) {
             <button class="action-btn" id="btnTop">⭐ Top Shows</button>
             <button class="action-btn" id="btnTours">🗺 Tours</button>
             <button class="action-btn" id="btnSongs">🎵 Songs</button>
+            <button class="action-btn" id="btnVenues">📍 Venues</button>
             <button class="action-btn" id="btnEras">📅 Eras</button>
           </div>
         </div>
       </div>
+      <div id="artistBioCard" class="artist-bio loading"></div>
       <div class="artist-years-wrap">
         <div class="artist-years-label">Browse by year</div>
         <div class="year-grid">
@@ -2171,10 +2488,12 @@ async function viewYears(artist) {
         </div>
       </div>`;
     fadeIn();
+    injectArtistBio(artist.name);
     $('contentInner').querySelectorAll('.year-card').forEach(c =>
       c.addEventListener('click', () => viewShows(artist, c.dataset.year)));
     $('btnTours').addEventListener('click',  () => viewTours(artist));
     $('btnSongs').addEventListener('click',  () => viewSongs(artist));
+    $('btnVenues').addEventListener('click', () => viewVenues(artist));
     $('btnEras').addEventListener('click',   () => viewDecades(artist, years));
     $('btnRandom').addEventListener('click', async () => {
       try { showLoading(); viewShow(artist, (await api.random(artist.slug)).display_date); }
@@ -2335,6 +2654,62 @@ async function getAllShows(artist) {
   return allShowsCache[artist.slug];
 }
 
+async function viewVenues(artist) {
+  nav.record(viewVenues, [artist]);
+  showLoading();
+  setBreadcrumb([
+    { label: artist.name, onClick: () => viewYears(artist) },
+    { label: 'Venues' },
+  ]);
+  try {
+    const allShows = await getAllShows(artist);
+    const venueMap = new Map();
+    for (const show of allShows) {
+      if (!show.venue?.name) continue;
+      const key = show.venue.name;
+      if (!venueMap.has(key)) venueMap.set(key, { name: show.venue.name, location: show.venue.location ?? '', count: 0 });
+      venueMap.get(key).count++;
+    }
+    const venues = [...venueMap.values()].sort((a, b) => b.count - a.count);
+
+    $('contentInner').innerHTML = `
+      <div class="section-header">
+        <div>
+          <div class="section-title">Venues — ${esc(artist.name)}</div>
+          <div class="section-subtitle">${venues.length} venue${venues.length !== 1 ? 's' : ''}</div>
+        </div>
+      </div>
+      <input class="song-filter" id="venueFilter" type="text" placeholder="Filter venues…" autocomplete="off" spellcheck="false">
+      <div class="venue-list" id="venueListEl"></div>`;
+
+    function renderVenueRows(list) {
+      $('venueListEl').innerHTML = list.map(v => `
+        <div class="venue-row" data-name="${esc(v.name)}">
+          <div class="venue-info">
+            <div class="venue-name">${esc(v.name)}</div>
+            ${v.location ? `<div class="venue-loc">${esc(v.location)}</div>` : ''}
+          </div>
+          <div class="venue-count">${v.count} show${v.count !== 1 ? 's' : ''}</div>
+        </div>`).join('');
+      $('venueListEl').querySelectorAll('.venue-row').forEach(row =>
+        row.addEventListener('click', () => {
+          const vname = row.dataset.name;
+          const venueShows = allShows.filter(s => s.venue?.name === vname);
+          viewShowList(artist, venueShows, `📍 ${vname}`);
+        }));
+    }
+
+    renderVenueRows(venues);
+    $('venueFilter').addEventListener('input', e => {
+      const q = e.target.value.toLowerCase().trim();
+      renderVenueRows(q ? venues.filter(v =>
+        v.name.toLowerCase().includes(q) || v.location.toLowerCase().includes(q)
+      ) : venues);
+    });
+    fadeIn();
+  } catch(e) { showError(e.message); }
+}
+
 async function viewSongs(artist) {
   nav.record(viewSongs, [artist]);
   showLoading();
@@ -2343,13 +2718,27 @@ async function viewSongs(artist) {
     { label: 'Songs' },
   ]);
   try {
-    const songs  = await api.songs(artist.slug);
-    const sorted = [...songs].sort((a, b) => (b.shows_played_at ?? 0) - (a.shows_played_at ?? 0));
+    const songs      = await api.songs(artist.slug);
+    const byPopular  = [...songs].sort((a, b) => (b.shows_played_at ?? 0) - (a.shows_played_at ?? 0));
+    const byRare     = [...songs].sort((a, b) => (a.shows_played_at ?? 0) - (b.shows_played_at ?? 0));
+    let   activeSort = 'popular';
+
+    function rarityLabel(n) {
+      if (n === 1)       return `<span class="rarity-badge rarity-once">Once</span>`;
+      if (n <= 5)        return `<span class="rarity-badge rarity-rare">Rare</span>`;
+      if (n <= 15)       return `<span class="rarity-badge rarity-uncommon">Uncommon</span>`;
+      return '';
+    }
+
     $('contentInner').innerHTML = `
       <div class="section-header">
         <div>
           <div class="section-title">Songs — ${esc(artist.name)}</div>
-          <div class="section-subtitle">${sorted.length} unique songs</div>
+          <div class="section-subtitle">${songs.length} unique songs</div>
+        </div>
+        <div class="song-sort-tabs">
+          <button class="song-sort-tab active" data-sort="popular">Most Played</button>
+          <button class="song-sort-tab" data-sort="rare">🦄 Rarities</button>
         </div>
       </div>
       <input class="song-filter" id="songFilter" type="text" placeholder="Filter songs…" autocomplete="off" spellcheck="false">
@@ -2358,18 +2747,30 @@ async function viewSongs(artist) {
     function renderSongRows(list) {
       $('songListEl').innerHTML = list.map(s => `
         <div class="song-row" data-name="${esc(s.name)}">
-          <div class="song-name">${esc(s.name)}</div>
+          <div class="song-name">${esc(s.name)}${activeSort === 'rare' ? rarityLabel(s.shows_played_at ?? 0) : ''}</div>
           <div class="song-count">${s.shows_played_at ?? '?'} shows</div>
         </div>`).join('');
       $('songListEl').querySelectorAll('.song-row').forEach(row =>
         row.addEventListener('click', () => viewSongShows(artist, row.dataset.name)));
     }
 
-    renderSongRows(sorted);
+    function currentList(q) {
+      const base = activeSort === 'rare' ? byRare : byPopular;
+      return q ? base.filter(s => s.name.toLowerCase().includes(q)) : base;
+    }
+
+    renderSongRows(currentList(''));
+
     $('songFilter').addEventListener('input', e => {
-      const q = e.target.value.toLowerCase().trim();
-      renderSongRows(q ? sorted.filter(s => s.name.toLowerCase().includes(q)) : sorted);
+      renderSongRows(currentList(e.target.value.toLowerCase().trim()));
     });
+
+    $('contentInner').querySelectorAll('.song-sort-tab').forEach(tab =>
+      tab.addEventListener('click', () => {
+        activeSort = tab.dataset.sort;
+        $('contentInner').querySelectorAll('.song-sort-tab').forEach(t => t.classList.toggle('active', t === tab));
+        renderSongRows(currentList($('songFilter').value.toLowerCase().trim()));
+      }));
   } catch(e) { showError(e.message); }
 }
 
@@ -2518,7 +2919,9 @@ function renderShowList(shows, artist, context) {
 
   function renderRows(list) {
     $('showListEl').innerHTML = list.map(s => {
-      const fav = effectiveArtist ? store.isFav(effectiveArtist.slug, s.display_date) : false;
+      const fav      = effectiveArtist ? store.isFav(effectiveArtist.slug, s.display_date) : false;
+      const myRating = effectiveArtist ? store.getRating(effectiveArtist.slug, s.display_date) : null;
+      const attended = effectiveArtist ? store.isAttended(effectiveArtist.slug, s.display_date) : false;
       const artBg = effectiveArtist?.image_url ? '' : `background:${artistColor(effectiveArtist?.name ?? '')}`;
       const artContent = effectiveArtist?.image_url
         ? `<img src="${esc(effectiveArtist.image_url)}" alt="" loading="lazy">`
@@ -2545,6 +2948,8 @@ function renderShowList(shows, artist, context) {
             <div class="show-card-badges">
               ${s.has_soundboard_source ? '<span class="badge badge-sbd">SBD</span>' : ''}
               ${s.avg_rating ? `<span class="star">${stars(s.avg_rating)}</span>` : ''}
+              ${myRating ? `<span class="badge badge-mine">★${myRating}</span>` : ''}
+              ${attended ? '<span class="badge badge-attended">📍</span>' : ''}
               ${(s.source_count ?? 1) > 1 ? `<span class="badge badge-src">${s.source_count} src</span>` : ''}
               <button class="show-heart ${fav ? 'favorited' : ''}" data-date="${esc(s.display_date)}" title="${fav ? 'Unsave' : 'Save'}">♥</button>
             </div>
@@ -2640,6 +3045,15 @@ function renderShow(show, artist) {
             ${show.tour_name                  ?`<span class="tag">${esc(show.tour_name)}</span>`:''}
             <span class="tag">${sources.length} recording${sources.length!==1?'s':''}</span>
           </div>
+          <div class="show-personal-row">
+            <div class="show-rating-stars" id="showRatingStars">
+              ${[1,2,3,4,5].map(n=>`<button class="pr-star${n<=(store.getRating(artist.slug,show.display_date)??0)?' filled':''}" data-r="${n}">★</button>`).join('')}
+              <span class="pr-label">${store.getRating(artist.slug,show.display_date)?'Your rating':'Rate this show'}</span>
+            </div>
+            <button class="action-btn attended-btn${store.isAttended(artist.slug,show.display_date)?' active':''}" id="btnAttended">
+              ${store.isAttended(artist.slug,show.display_date)?'📍 I Was There':'📍 I Was There'}
+            </button>
+          </div>
           <div class="show-actions">
             <button class="action-btn primary" id="btnPlayAll">▶ Play Best Recording</button>
             <button class="action-btn show-heart-btn ${fav?'active':''}" id="btnFav">${fav?'♥ Saved':'♡ Save'}</button>
@@ -2678,6 +3092,27 @@ function renderShow(show, artist) {
     const panel = $('companionPanel');
     if (panel.classList.contains('open')) { closeCompanion(); return; }
     openCompanion(state.source ?? sources[0], { ...show, artist_slug: artist.slug });
+  });
+
+  // Personal rating stars
+  function refreshStars() {
+    const r = store.getRating(artist.slug, show.display_date) ?? 0;
+    $('showRatingStars').querySelectorAll('.pr-star').forEach(s => s.classList.toggle('filled', +s.dataset.r <= r));
+    $('showRatingStars').querySelector('.pr-label').textContent = r ? 'Your rating' : 'Rate this show';
+  }
+  $('showRatingStars').querySelectorAll('.pr-star').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const prev = store.getRating(artist.slug, show.display_date);
+      const val  = +btn.dataset.r;
+      store.setRating(artist.slug, show.display_date, prev === val ? null : val);
+      refreshStars();
+    }));
+
+  // Attended toggle
+  $('btnAttended').addEventListener('click', () => {
+    const now = store.toggleAttended(artist, show);
+    $('btnAttended').classList.toggle('active', now);
+    showToast(now ? '📍 Marked as attended!' : 'Attendance removed');
   });
 
   function renderSourceArea(idx) {
@@ -3466,12 +3901,13 @@ async function nugsViewArtist(artist) {
               <div class="artist-hero-meta">${allReleases.length} releases</div>
             </div>
           </div>
+          <div id="artistBioCard" class="artist-bio loading"></div>
           <div id="nugsFilterControls"></div>
         </div>
         <div class="show-list" id="nugsReleaseList"></div>
       </div>`;
     fadeIn(ci);
-
+    injectArtistBio(artist.name);
     refresh();
   } catch (e) {
     if (e.message?.includes('nugs:')) { handleNugsAuthError(e); return; }
@@ -3793,8 +4229,9 @@ document.querySelectorAll('.nav-btn').forEach(btn =>
     if (tab === 'today')    { renderArtists([]); viewToday(); }
     if (tab === 'trending') { renderArtists([]); viewTrending(); }
     if (tab === 'saved')    { renderArtists([]); viewSaved(); }
-    if (tab === 'history')  { renderArtists([]); viewHistory(); }
-    if (tab === 'stats')    { renderArtists([]); viewStats(); }
+    if (tab === 'history')   { renderArtists([]); viewHistory(); }
+    if (tab === 'bookmarks') { renderArtists([]); viewBookmarks(); }
+    if (tab === 'stats')     { renderArtists([]); viewStats(); }
     if (tab === 'tapes')    { renderArtists([]); viewTapes(); }
   }));
 
@@ -3850,6 +4287,15 @@ window.ipc?.on('media', cmd => {
   if (cmd === 'play-pause') player.toggle();
   if (cmd === 'next')       player.next();
   if (cmd === 'prev')       player.prev();
+});
+
+window.ipc?.onMpris(cmd => {
+  if (cmd === 'playpause') { player.toggle(); window.ipc?.mprisUpdate({ status: playing ? 'Paused' : 'Playing' }); }
+  if (cmd === 'play')      { if (!playing) player.toggle(); window.ipc?.mprisUpdate({ status: 'Playing' }); }
+  if (cmd === 'pause')     { if (playing)  player.toggle(); window.ipc?.mprisUpdate({ status: 'Paused' }); }
+  if (cmd === 'stop')      { player.toggle(); window.ipc?.mprisUpdate({ status: 'Stopped' }); }
+  if (cmd === 'next')      player.next();
+  if (cmd === 'previous')  player.prev();
 });
 window.ipc?.on('cast-status', status => {
   if (status.state === 'DISCONNECTED') {
