@@ -436,6 +436,11 @@ const store = {
     all.splice(idx, 1);
     localStorage.setItem('db-bookmarks', JSON.stringify(all));
   },
+  removeAttended(idx) {
+    const all = this.getAttended();
+    all.splice(idx, 1);
+    localStorage.setItem('db-attended', JSON.stringify(all));
+  },
 };
 
 /* ── Settings store ────────────────────────────── */
@@ -1922,9 +1927,7 @@ function viewBookmarks(activeTab = 'bookmarks') {
     container.querySelectorAll('.bk-del').forEach(btn =>
       btn.addEventListener('click', e => {
         e.stopPropagation();
-        const all = store.getAttended();
-        all.splice(+btn.dataset.idx, 1);
-        localStorage.setItem('db-attended', JSON.stringify(all));
+        store.removeAttended(+btn.dataset.idx);
         renderAttendedTab();
       }));
   }
@@ -3744,7 +3747,7 @@ async function nugsLoadImage(url) {
   if (!url) return null;
   try {
     const token = nugsAuth.get()?.access_token ?? null;
-    return await window.ipc.fetchImage(url, token);
+    return await window.ipc?.fetchImage(url, token);
   } catch {
     return null;
   }
