@@ -13,7 +13,18 @@
     <div class="titlebar-left">
       <button class="tb-nav-btn" id="btnBack"  title="Back (Alt+←)"    disabled>&#8592;</button>
       <button class="tb-nav-btn" id="btnFwd"   title="Forward (Alt+→)"  disabled>&#8594;</button>
-      <div class="titlebar-logo">D</div>
+      <div class="titlebar-logo">
+        <svg width="13" height="10" viewBox="0 0 22 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="0.6" y="0.6" width="20.8" height="14.8" rx="2.4" stroke="rgba(255,255,255,0.9)" stroke-width="1.2"/>
+          <rect x="2.5" y="1.8" width="17" height="5" rx="1" fill="rgba(255,255,255,0.2)"/>
+          <rect x="2.5" y="7.5" width="17" height="5.5" rx="1" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/>
+          <circle cx="7" cy="10.2" r="2" stroke="rgba(255,255,255,0.8)" stroke-width="0.9"/>
+          <circle cx="7" cy="10.2" r="0.7" fill="rgba(255,255,255,0.8)"/>
+          <circle cx="15" cy="10.2" r="2" stroke="rgba(255,255,255,0.8)" stroke-width="0.9"/>
+          <circle cx="15" cy="10.2" r="0.7" fill="rgba(255,255,255,0.8)"/>
+          <path d="M9 9.5 Q11 8.6 13 9.5" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/>
+        </svg>
+      </div>
       <span class="titlebar-name">DAYS BETWEEN</span>
     </div>
     <div class="titlebar-controls">
@@ -121,6 +132,9 @@
         <span class="time" id="timeCur">0:00</span>
         <div class="progress-bar" id="progressBar">
           <div class="progress-fill" id="progressFill"></div>
+          <div class="progress-markers" id="progressMarkers"></div>
+          <div class="progress-thumb" id="progressThumb"></div>
+          <div class="progress-tooltip" id="progressTooltip"></div>
         </div>
         <span class="time" id="timeDur">0:00</span>
       </div>

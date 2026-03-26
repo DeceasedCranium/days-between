@@ -5,19 +5,19 @@
 }
 
 :root {
-  --bg:        #0d0f14;
-  --bg2:       #12151e;
-  --bg3:       #1a1f2e;
-  --bg4:       #222738;
-  --accent:    #e94560;
-  --accent2:   #ff6b81;
-  --text:      #e8eaf0;
-  --text2:     #8b95a8;
-  --text3:     #546e7a;
-  --border:    #252d3d;
+  --bg:        #0e0b12;
+  --bg2:       #130f1a;
+  --bg3:       #1c1628;
+  --bg4:       #261e36;
+  --accent:    #f0952c;
+  --accent2:   #f5b84a;
+  --text:      #edeaf2;
+  --text2:     #9b93b0;
+  --text3:     #5e5470;
+  --border:    #241c34;
   --green:     #52c41a;
   --sidebar-w: 264px;
-  --player-h:  90px;
+  --player-h:  92px;
   --title-h:   38px;
 }
 
@@ -794,6 +794,7 @@ body {
   cursor: pointer;
   position: relative;
   transition: height 0.1s;
+  overflow: visible;
 }
 .player-progress:hover .progress-bar { height: 6px; }
 .progress-fill {
@@ -802,8 +803,61 @@ body {
   border-radius: 2px;
   width: 0%;
   pointer-events: none;
-  transition: width 0.4s linear;
+  transition: width 0.25s linear;
 }
+.progress-bar.scrubbing .progress-fill { transition: none; }
+.progress-markers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.progress-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 10px;
+  background: rgba(255,255,255,0.35);
+  border-radius: 1px;
+  pointer-events: none;
+  transition: height 0.15s, background 0.15s;
+}
+.player-progress:hover .progress-marker {
+  height: 14px;
+  background: rgba(255,255,255,0.55);
+}
+.progress-thumb {
+  position: absolute;
+  top: 50%;
+  width: 13px; height: 13px;
+  background: #fff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  z-index: 2;
+}
+.player-progress:hover .progress-thumb { opacity: 1; }
+.progress-tooltip {
+  position: absolute;
+  bottom: 18px;
+  transform: translateX(-50%);
+  background: rgba(15,18,26,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 5px;
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.1s;
+  z-index: 10;
+}
+.player-progress:hover .progress-tooltip { opacity: 1; }
 
 .player-volume {
   display: flex;
@@ -1945,7 +1999,7 @@ html[data-theme="light"] .sidebar  { background: #f0f2f5; border-color: #d4d8de;
   inset: -40px;
   background-size: cover;
   background-position: center;
-  filter: blur(50px) brightness(0.25) saturate(1.8);
+  filter: blur(50px) brightness(0.45) saturate(1.6);
   transform: scale(1.1);
 }
 .npo-close {
@@ -1992,6 +2046,19 @@ html[data-theme="light"] .sidebar  { background: #f0f2f5; border-color: #d4d8de;
 }
 .npo-art-wrap img     { width: 100%; height: 100%; object-fit: cover; display: block; }
 .npo-art-wrap .art-init { font-size: 60px; font-weight: 900; color: rgba(255,255,255,0.4); }
+
+/* Art text fallback card */
+.art-text-card {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 100%; height: 100%; padding: 12px; box-sizing: border-box; text-align: center;
+}
+.art-text-name  { font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.85); line-height: 1.3; }
+.art-text-date  { font-size: 11px; color: rgba(255,255,255,0.55); margin-top: 5px; }
+.art-text-venue { font-size: 10px; color: rgba(255,255,255,0.4); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+
+/* Clickable player sub */
+.player-sub { cursor: pointer; }
+.player-sub:hover .sub-artist { color: var(--text); text-decoration: underline; }
 .npo-title {
   font-size: 20px;
   font-weight: 700;
@@ -2852,4 +2919,254 @@ body { border-radius: 12px; overflow: hidden; }
 .eq-unavail {
   font-size: 11px; color: var(--text3); text-align: center;
   padding: 4px 0; font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════
+   VISUAL POLISH — Apple-quality refinements
+   ═══════════════════════════════════════════════ */
+
+/* ── Global refinements ────────────────────────── */
+html, body { font-size: 13.5px; }
+
+/* Smoother transitions everywhere */
+*, *::before, *::after { transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+
+/* ── Titlebar ───────────────────────────────────── */
+.titlebar {
+  background: linear-gradient(180deg, #170e24 0%, #130f1a 100%);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.titlebar-logo {
+  background: linear-gradient(135deg, #f0952c, #c96d10);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(240,149,44,0.35);
+  font-size: 10px;
+}
+.titlebar-name { color: rgba(237,234,242,0.5); font-weight: 600; letter-spacing: 0.06em; }
+
+/* ── Sidebar ────────────────────────────────────── */
+.sidebar {
+  background: linear-gradient(180deg, #130f1a 0%, #110d18 100%);
+  border-right: 1px solid rgba(255,255,255,0.05);
+  box-shadow: 2px 0 20px rgba(0,0,0,0.4);
+}
+.sidebar-search input {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+.sidebar-search input:focus { border-color: var(--accent); background: rgba(255,255,255,0.07); }
+
+/* ── Nav buttons ────────────────────────────────── */
+.nav-btn {
+  border-radius: 8px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  padding: 6px 2px;
+}
+.nav-btn.active {
+  background: linear-gradient(135deg, rgba(240,149,44,0.2), rgba(240,149,44,0.08));
+  border-color: rgba(240,149,44,0.3);
+  color: var(--accent2);
+  box-shadow: 0 1px 6px rgba(240,149,44,0.12), inset 0 1px 0 rgba(255,255,255,0.07);
+}
+
+/* ── Artist items ───────────────────────────────── */
+.artist-item {
+  border-radius: 8px;
+  margin: 1px 6px;
+  padding: 5px 8px 5px 10px;
+  border-left: none;
+}
+.artist-item:hover  { background: rgba(255,255,255,0.05); border-left: none; }
+.artist-item.active {
+  background: rgba(240,149,44,0.1);
+  border-left: none;
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--accent2);
+}
+.artist-item.now-playing .artist-name { color: var(--accent); }
+.artist-avatar {
+  width: 30px; height: 30px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+/* ── Breadcrumb ─────────────────────────────────── */
+.breadcrumb {
+  background: linear-gradient(180deg, #170e24 0%, #130f1a 100%);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  height: 42px;
+}
+
+/* ── Content ────────────────────────────────────── */
+.content { background: var(--bg); }
+.content-inner { padding: 22px 24px; }
+
+/* ── Welcome screen ─────────────────────────────── */
+.welcome-logo {
+  background: linear-gradient(135deg, #f0952c, #c96d10);
+  box-shadow: 0 12px 40px rgba(240,149,44,0.35);
+  border-radius: 22px;
+}
+
+/* ── Year cards ─────────────────────────────────── */
+.year-card {
+  border-radius: 14px;
+  border-color: rgba(255,255,255,0.06);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  background: var(--bg3);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+  padding: 22px 10px;
+  transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+}
+.year-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent);
+  box-shadow: 0 8px 24px rgba(240,149,44,0.15), 0 2px 12px rgba(0,0,0,0.3);
+}
+.year-num { font-size: 24px; font-weight: 800; }
+
+/* ── Show rows ──────────────────────────────────── */
+.show-row {
+  border-radius: 12px;
+  border-color: rgba(255,255,255,0.05);
+  border-top: 1px solid rgba(255,255,255,0.07);
+  box-shadow: 0 1px 8px rgba(0,0,0,0.2);
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  padding: 13px 18px;
+}
+.show-row:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+  box-shadow: 0 4px 16px rgba(240,149,44,0.1), 0 1px 8px rgba(0,0,0,0.3);
+  background: var(--bg4);
+}
+
+/* ── Action buttons ─────────────────────────────── */
+.action-btn {
+  border-radius: 10px;
+  font-size: 12.5px;
+  transition: all 0.15s;
+}
+.action-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(240,149,44,0.08); }
+.action-btn.primary { background: linear-gradient(135deg, #f0952c, #d4790e); border-color: transparent; }
+.action-btn.primary:hover { background: linear-gradient(135deg, #f5a83e, #e08620); }
+.action-btn.show-heart-btn.active { background: rgba(240,149,44,0.12); border-color: var(--accent); color: var(--accent); }
+
+/* ── Tags ───────────────────────────────────────── */
+.tag-accent { background: rgba(240,149,44,0.12); color: var(--accent); }
+
+/* ── Tabs ───────────────────────────────────────── */
+.source-tab.active { background: linear-gradient(135deg, #f0952c, #d4790e); border-color: transparent; }
+.sidebar .source-tab.active { background: linear-gradient(135deg, rgba(240,149,44,0.2), rgba(240,149,44,0.08)); border-color: rgba(240,149,44,0.3); color: var(--accent2); }
+
+/* ── Filter buttons ─────────────────────────────── */
+.filter-btn.active { background: rgba(240,149,44,0.12); border-color: var(--accent); color: var(--accent); }
+.filter-btn:hover  { border-color: var(--accent); color: var(--accent); }
+
+/* ── Track rows ─────────────────────────────────── */
+.track-row { border-radius: 8px; transition: background 0.12s; }
+.track-row.playing { background: rgba(240,149,44,0.08); }
+.track-row.playing .track-num { color: var(--accent); }
+
+/* ── Player bar ─────────────────────────────────── */
+.player {
+  background: linear-gradient(180deg, #130f1a 0%, #0f0c16 100%);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
+}
+.player-title { font-size: 13.5px; font-weight: 700; }
+.player-sub   { color: var(--text3); font-size: 11px; }
+
+/* Play button glow */
+.ctrl-play {
+  background: linear-gradient(135deg, #f0952c, #d4790e);
+  box-shadow: 0 4px 16px rgba(240,149,44,0.4);
+  width: 40px; height: 40px;
+  transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
+}
+.ctrl-play:hover {
+  background: linear-gradient(135deg, #f5a83e, #e08620);
+  box-shadow: 0 6px 22px rgba(240,149,44,0.55);
+  transform: scale(1.06);
+}
+.ctrl-play:active { transform: scale(0.96); }
+
+/* Progress bar */
+.progress-fill {
+  background: linear-gradient(90deg, #f0952c, #f5b84a);
+  border-radius: 2px;
+}
+.progress-bar { border-radius: 3px; }
+.player-progress:hover .progress-bar { height: 6px; }
+
+/* ── Bookmarks tabs ─────────────────────────────── */
+.bk-tab.active { background: linear-gradient(135deg, #f0952c, #d4790e); border-color: transparent; }
+
+/* ── Scrollbars ─────────────────────────────────── */
+::-webkit-scrollbar       { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+/* ── Section headers ────────────────────────────── */
+.section-title { font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
+
+/* ── Source meta (taper notes) ──────────────────── */
+.source-meta {
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.05);
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+/* ── Spinner ────────────────────────────────────── */
+.spinner { border-top-color: var(--accent); }
+
+/* ── Show header hero ───────────────────────────── */
+.show-header { border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+/* ── Rating stars active ────────────────────────── */
+.star { color: var(--accent2); }
+
+/* ── Now playing panel ──────────────────────────── */
+.np-overlay {
+  background: rgba(14,11,18,0.96);
+  backdrop-filter: blur(20px);
+}
+
+/* ── Artist bio card ────────────────────────────── */
+.artist-bio {
+  border-radius: 12px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+}
+.bio-link-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ── On This Day ────────────────────────────────── */
+.otd-hero { background: linear-gradient(135deg, rgba(240,149,44,0.12), rgba(240,149,44,0.04)); border-color: rgba(240,149,44,0.2); }
+.otd-play-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ── Search results ─────────────────────────────── */
+.sr-row { border-radius: 10px; }
+.sr-row:hover { background: var(--bg3); }
+
+/* ── Queue panel ────────────────────────────────── */
+.queue-panel {
+  border-left: 1px solid rgba(255,255,255,0.05);
+  background: linear-gradient(180deg, #130f1a 0%, #110d18 100%);
+}
+.queue-item.playing { background: rgba(240,149,44,0.08); }
+.queue-item.playing .qi-title { color: var(--accent); }
+
+/* ── Fade-in animation ──────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Settings ───────────────────────────────────── */
+.settings-section {
+  border-radius: 14px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  overflow: hidden;
 }

@@ -1,12 +1,88 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <!-- Background -->
-  <rect width="256" height="256" rx="52" fill="#0d0f14"/>
-  <!-- Headphone arc -->
-  <path d="M128 60C84 60 48 96 48 140v8h4V140c0-41.9 34.1-76 76-76s76 34.1 76 76v8h4v-8c0-44-36-80-80-80z" fill="#e94560"/>
-  <!-- Left ear cup -->
-  <rect x="32" y="140" width="36" height="56" rx="10" fill="#e94560"/>
-  <!-- Right ear cup -->
-  <rect x="188" y="140" width="36" height="56" rx="10" fill="#e94560"/>
-  <!-- Center dot accent -->
-  <circle cx="128" cy="172" r="8" fill="#ff6b81" opacity="0.6"/>
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="20%" r="70%">
+      <stop offset="0%" stop-color="#2a1550"/>
+      <stop offset="100%" stop-color="#0a0812"/>
+    </radialGradient>
+    <radialGradient id="glowL" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f0952c" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#f0952c" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowR" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f0952c" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#f0952c" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="labelGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2e2248"/>
+      <stop offset="100%" stop-color="#1e1636"/>
+    </linearGradient>
+    <linearGradient id="housingGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#211840"/>
+      <stop offset="100%" stop-color="#160f2a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App icon background -->
+  <rect width="256" height="256" rx="56" fill="url(#bgGrad)"/>
+
+  <!-- Cassette housing outer -->
+  <rect x="20" y="68" width="216" height="136" rx="14" fill="url(#housingGrad)"/>
+  <rect x="20" y="68" width="216" height="136" rx="14" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="1.5"/>
+  <!-- Top edge highlight -->
+  <rect x="21" y="69" width="214" height="2" rx="1" fill="rgba(255,255,255,0.06)"/>
+
+  <!-- Label area -->
+  <rect x="32" y="78" width="192" height="62" rx="8" fill="url(#labelGrad)"/>
+  <rect x="32" y="78" width="192" height="62" rx="8" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+
+  <!-- Label: brand text -->
+  <text x="128" y="111" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"
+        font-weight="900" font-size="30" fill="#f0952c" text-anchor="middle" letter-spacing="6">DB</text>
+  <text x="128" y="128" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"
+        font-weight="500" font-size="8.5" fill="#7a6a9a" text-anchor="middle" letter-spacing="3.5">DAYS BETWEEN</text>
+
+  <!-- Tape window background -->
+  <rect x="32" y="148" width="192" height="48" rx="6" fill="#0a0812"/>
+  <rect x="32" y="148" width="192" height="48" rx="6" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+
+  <!-- Reel glow halos -->
+  <circle cx="84" cy="172" r="26" fill="url(#glowL)"/>
+  <circle cx="172" cy="172" r="26" fill="url(#glowR)"/>
+
+  <!-- Left reel outer ring -->
+  <circle cx="84" cy="172" r="20" fill="#130f20"/>
+  <circle cx="84" cy="172" r="20" fill="none" stroke="#2e2448" stroke-width="1.5"/>
+  <!-- Left reel inner -->
+  <circle cx="84" cy="172" r="12" fill="#1a1432"/>
+  <circle cx="84" cy="172" r="12" fill="none" stroke="#f0952c" stroke-width="0.8" opacity="0.4"/>
+  <!-- Left hub hole -->
+  <circle cx="84" cy="172" r="4.5" fill="#0a0812"/>
+  <!-- Left spokes -->
+  <line x1="84" y1="160" x2="84" y2="167" stroke="#f0952c" stroke-width="1.2" opacity="0.5"/>
+  <line x1="74" y1="177" x2="80" y2="174" stroke="#f0952c" stroke-width="1.2" opacity="0.5"/>
+  <line x1="94" y1="177" x2="88" y2="174" stroke="#f0952c" stroke-width="1.2" opacity="0.5"/>
+
+  <!-- Right reel outer ring -->
+  <circle cx="172" cy="172" r="20" fill="#130f20"/>
+  <circle cx="172" cy="172" r="20" fill="none" stroke="#2e2448" stroke-width="1.5"/>
+  <!-- Right reel inner -->
+  <circle cx="172" cy="172" r="12" fill="#1a1432"/>
+  <circle cx="172" cy="172" r="12" fill="none" stroke="#f0952c" stroke-width="0.8" opacity="0.4"/>
+  <!-- Right hub hole -->
+  <circle cx="172" cy="172" r="4.5" fill="#0a0812"/>
+  <!-- Right spokes -->
+  <line x1="172" y1="160" x2="172" y2="167" stroke="#f0952c" stroke-width="1.2" opacity="0.5"/>
+  <line x1="162" y1="177" x2="168" y2="174" stroke="#f0952c" stroke-width="1.2" opacity="0.5"/>
+  <line x1="182" y1="177" x2="176" y2="174" stroke="#f0952c" stroke-width="1.2" opacity="0.5"/>
+
+  <!-- Tape path between reels -->
+  <path d="M104 164 Q128 157 152 164" stroke="#3a2c58" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+
+  <!-- Center guide pin -->
+  <rect x="118" y="186" width="20" height="6" rx="2" fill="#1a1432"/>
+  <circle cx="128" cy="189" r="2.5" fill="#0a0812"/>
+
+  <!-- Bottom screw notches (decorative) -->
+  <circle cx="42" cy="195" r="4" fill="#130f20" stroke="#2a2040" stroke-width="1"/>
+  <circle cx="214" cy="195" r="4" fill="#130f20" stroke="#2a2040" stroke-width="1"/>
 </svg>

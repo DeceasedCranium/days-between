@@ -12,6 +12,8 @@ const state = {
   queue: [], queueIdx: -1,
   shuffleOn: false, repeatMode: 'off', // off | one | all
   originalQueue: [],
+  // Separate player state — never cleared by navigation
+  playingArtist: null, playingShow: null,
 };
 
 /* ── DOM helpers ───────────────────────────────── */
@@ -89,10 +91,10 @@ async function injectArtistBio(artistName) {
     btn.addEventListener('click', () => window.ipc?.openUrl(btn.dataset.url)));
 }
 
-function setPlayerArt(artist, artUrl) {
+function setPlayerArt(artist, artUrl, show) {
   const el = $('playerArt');
   if (!el) return;
-  const url = artUrl ?? artist?.image_url ?? null;
+  const url = artUrl ?? artist?.image_url ?? artist?._wikiImg ?? null;
   if (url) {
     const fallbackBg = artistColor(artist?.name ?? '');
     const fallbackInit = esc((artist?.name ?? '?')[0].toUpperCase());
@@ -100,11 +102,27 @@ function setPlayerArt(artist, artUrl) {
     el.querySelector('img').src = url;
     el.style.background = '';
   } else {
-    const initial = (artist?.name ?? '?')[0].toUpperCase();
     el.style.background = artistColor(artist?.name ?? '');
-    el.innerHTML = `<span class="art-init">${esc(initial)}</span>`;
+    const name = esc(artist?.name ?? '');
+    const date = esc(show?.display_date ?? '');
+    const venue = esc(show?.venue?.name ?? '');
+    el.innerHTML = `<div class="art-text-card">
+      <span class="art-text-name">${name}</span>
+      ${date  ? `<span class="art-text-date">${date}</span>`   : ''}
+      ${venue ? `<span class="art-text-venue">${venue}</span>` : ''}
+    </div>`;
   }
   if (nowPlayingOpen) syncNowPlayingContent();
+}
+
+function setPlayerSub(artist, show) {
+  const el = $('playerSub');
+  if (!el) return;
+  const name = esc(artist?.name ?? '');
+  const date = esc(show?.display_date ?? '');
+  el.innerHTML = name
+    ? `<span class="sub-artist clickable">${name}</span>${date ? ` · <span class="sub-date">${date}</span>` : ''}`
+    : date;
 }
 
 // Cache search elements — they get re-parented into breadcrumb repeatedly
@@ -654,7 +672,7 @@ function shuffle(arr) {
 }
 
 function syncEq() {
-  $('eqBars').classList.toggle('playing', playing);
+  $('eqBars')?.classList.toggle('playing', playing);
 }
 
 function preloadNext() {
@@ -671,14 +689,17 @@ const player = {
   load(track, artist, show) {
     if (cast.active) {
       state.artist = artist; state.show = show;
+      state.playingArtist = artist; state.playingShow = show;
       $('playerTitle').textContent = track.title || 'Unknown Track';
-      $('playerSub').textContent = `${artist?.name ?? ''} · ${show?.display_date ?? ''}`;
+      setPlayerSub(artist, show);
       window.ipc?.send('player-update', { title: `${track.title} — ${artist?.name}` });
-      setPlayerArt(artist);
+      setPlayerArt(artist, show?._artData ?? show?._art ?? artist?._wikiImg ?? null, show);
       const url = track.stream_url ?? track.mp3_url;
       if (url) window.ipc?.castLoad(url, castContentType(url), track.title ?? '', '').catch(() => {});
       return;
     }
+    state.artist = artist; state.show = show;
+    state.playingArtist = artist; state.playingShow = show;
     const url = track?.stream_url ?? track?.mp3_url;
     if (!url) return;
     destroyHls();
@@ -699,7 +720,7 @@ const player = {
     $('btnPlay').innerHTML = '&#9646;&#9646;';
     $('playerTitle').textContent = track.title || 'Unknown Track';
     $('playerTitle').classList.add('clickable');
-    $('playerSub').textContent = `${artist?.name ?? ''} · ${show?.display_date ?? ''}`;
+    setPlayerSub(artist, show);
     window.ipc?.send('player-update', { title: `${track.title} — ${artist?.name}` });
     store.pushHistory(track, artist, show);
     lfm.onTrackStart(track, artist, show);
@@ -713,7 +734,7 @@ const player = {
         'xesam:album':     show?.display_date ?? '',
       },
     });
-    setPlayerArt(artist);
+    setPlayerArt(artist, show?._artData ?? show?._art ?? artist?._wikiImg ?? null, show);
     if (nowPlayingOpen) syncNowPlayingContent();
     if (settings.getKey('notifications', false)) {
       window.ipc?.send('notify-track', {
@@ -844,8 +865,8 @@ async function nugsResolveAndPlay(track, artist, show) {
   if (!track.stream_url) {
     // Show track in player bar immediately so UI feels responsive
     $('playerTitle').textContent = track.title || '…';
-    $('playerSub').textContent   = `${artist?.name ?? ''} · ${show?.display_date ?? ''}`;
-    setPlayerArt(artist, show?._artData ?? show?._art ?? null);
+    setPlayerSub(artist, show);
+    setPlayerArt(artist, show?._artData ?? show?._art ?? artist?._wikiImg ?? null, show);
     showToast('Loading stream…');
     try {
       if (track._nugs_video) {
@@ -902,12 +923,67 @@ audio.addEventListener('ended', () => {
     player.next();
   }
 });
+/* ── Show-level progress helpers ───────────────── */
+function showProgressData() {
+  const q = state.queue;
+  if (q.length <= 1) return null;
+  const totalDur = q.reduce((s, t) => s + (t.duration ?? 0), 0);
+  if (!totalDur) return null;
+  const completedDur = q.slice(0, state.queueIdx).reduce((s, t) => s + (t.duration ?? 0), 0);
+  return { totalDur, completedDur };
+}
+
+function trackAtShowTime(targetTime) {
+  let cum = 0;
+  for (let i = 0; i < state.queue.length; i++) {
+    cum += state.queue[i].duration ?? 0;
+    if (cum >= targetTime) return { track: state.queue[i], idx: i, offset: targetTime - (cum - (state.queue[i].duration ?? 0)) };
+  }
+  const last = state.queue[state.queue.length - 1];
+  return { track: last, idx: state.queue.length - 1, offset: last?.duration ?? 0 };
+}
+
+function seekToShowPct(pct) {
+  if (audio.duration) audio.currentTime = Math.max(0, Math.min(audio.duration, pct * audio.duration));
+}
+
+function updateProgressMarkers() {
+  const el = $('progressMarkers');
+  if (!el) return;
+  const sp = showProgressData();
+  if (!sp) { el.innerHTML = ''; return; }
+  let html = '', cum = 0;
+  for (let i = 0; i < state.queue.length - 1; i++) {
+    cum += state.queue[i].duration ?? 0;
+    const pct = (cum / sp.totalDur) * 100;
+    html += `<div class="progress-marker" style="left:${pct}%"></div>`;
+  }
+  el.innerHTML = html;
+}
+
+function updateProgressTooltip(clientX) {
+  const bar = $('progressBar');
+  const tooltip = $('progressTooltip');
+  const thumb = $('progressThumb');
+  if (!bar || !tooltip) return;
+  const r = bar.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+  const pctStr = `${pct * 100}%`;
+  tooltip.style.left = pctStr;
+  if (thumb) thumb.style.left = pctStr;
+  tooltip.textContent = fmt(pct * (audio.duration || 0));
+}
+
 audio.addEventListener('timeupdate', () => {
   if (!audio.duration) return;
   const pct = `${(audio.currentTime / audio.duration) * 100}%`;
   $('progressFill').style.width = pct;
   $('timeCur').textContent = fmt(audio.currentTime);
   $('timeDur').textContent = fmt(audio.duration);
+  if (!$('progressBar')?.matches(':hover') && !_scrubbing) {
+    const thumb = $('progressThumb');
+    if (thumb) thumb.style.left = pct;
+  }
   if (nowPlayingOpen) {
     $('npoFill').style.width  = pct;
     $('npoTimeCur').textContent = fmt(audio.currentTime);
@@ -937,7 +1013,7 @@ function syncNowPlayingContent() {
   }
 
   if ($('npoTitle')) $('npoTitle').textContent = $('playerTitle')?.textContent ?? '';
-  if ($('npoSub'))   $('npoSub').textContent   = $('playerSub')?.textContent   ?? '';
+  if ($('npoSub'))   $('npoSub').innerHTML    = $('playerSub')?.innerHTML     ?? '';
 
   // Sync progress
   if (audio.duration) {
@@ -998,6 +1074,7 @@ function closeNowPlaying() {
 
 // Wire overlay controls
 $('npoClose').addEventListener('click', closeNowPlaying);
+$('npoSub').addEventListener('click', () => { closeNowPlaying(); navToCurrentArtist(); });
 $('nowPlayingOverlay').addEventListener('click', e => {
   if (e.target === $('nowPlayingOverlay')) closeNowPlaying();
 });
@@ -1039,10 +1116,45 @@ $('npoBookmark').addEventListener('click', () => {
 // Open overlay by clicking the player art
 $('playerArt').addEventListener('click', openNowPlaying);
 
-$('progressBar').addEventListener('click', e => {
-  if (!audio.duration) return;
-  const r = e.currentTarget.getBoundingClientRect();
-  audio.currentTime = ((e.clientX - r.left) / r.width) * audio.duration;
+/* ── Progress bar: drag scrub + hover tooltip ───── */
+let _scrubbing = false;
+let _scrubPct  = 0;
+
+function getBarPct(clientX) {
+  const r = $('progressBar').getBoundingClientRect();
+  return Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+}
+
+$('progressBar').addEventListener('mousemove', e => updateProgressTooltip(e.clientX));
+$('progressBar').addEventListener('mouseleave', () => {
+  if (_scrubbing) return;
+  const sp = showProgressData();
+  const pct = sp
+    ? `${((sp.completedDur + audio.currentTime) / sp.totalDur) * 100}%`
+    : audio.duration ? `${(audio.currentTime / audio.duration) * 100}%` : '0%';
+  const thumb = $('progressThumb');
+  if (thumb) thumb.style.left = pct;
+});
+$('progressBar').addEventListener('mousedown', e => {
+  e.preventDefault();
+  _scrubbing = true;
+  _scrubPct  = getBarPct(e.clientX);
+  $('progressBar').classList.add('scrubbing');
+  // Show scrub position visually immediately
+  $('progressFill').style.width = `${_scrubPct * 100}%`;
+  updateProgressTooltip(e.clientX);
+});
+document.addEventListener('mousemove', e => {
+  if (!_scrubbing) return;
+  _scrubPct = getBarPct(e.clientX);
+  $('progressFill').style.width = `${_scrubPct * 100}%`;
+  updateProgressTooltip(e.clientX);
+});
+document.addEventListener('mouseup', () => {
+  if (!_scrubbing) return;
+  _scrubbing = false;
+  $('progressBar').classList.remove('scrubbing');
+  seekToShowPct(_scrubPct);
 });
 
 $('volumeSlider').addEventListener('input', e => { audio.volume = e.target.value / 100; });
@@ -1052,10 +1164,28 @@ $('btnPlay').addEventListener('click', () => player.toggle());
 $('btnNext').addEventListener('click', () => player.next());
 $('btnPrev').addEventListener('click', () => player.prev());
 
-// Now-playing click → jump back to current show
+// Song title click → jump back to current show
 $('playerTitle').addEventListener('click', () => {
-  if (state.artist && state.show) viewShow(state.artist, state.show.display_date);
+  const artist = state.playingArtist;
+  const show   = state.playingShow;
+  if (!artist || !show) return;
+  if (show._nugs) nugsViewRelease(artist, show._containerId);
+  else viewShow(artist, show.display_date);
 });
+
+// Artist name click → navigate to artist page
+function navToCurrentArtist() {
+  const artist = state.playingArtist;
+  if (!artist) return;
+  document.querySelectorAll('.artist-item').forEach(i => i.classList.remove('active'));
+  const sel = artist._nugs
+    ? `.artist-item[data-nugs-slug="${CSS.escape(artist.slug)}"]`
+    : `.artist-item[data-slug="${CSS.escape(artist.slug)}"]`;
+  document.querySelector(sel)?.classList.add('active');
+  if (artist._nugs) nugsViewArtist(artist);
+  else viewYears(artist);
+}
+$('playerSub').addEventListener('click', () => navToCurrentArtist());
 
 /* ── Shuffle / Repeat / Queue controls ─────────── */
 $('btnShuffle').addEventListener('click', () => {
@@ -1375,7 +1505,7 @@ async function castAdvanceTrack() {
   }
   if (!url) return;
   $('playerTitle').textContent = track.title || '';
-  $('playerSub').textContent = `${state.artist?.name ?? ''} · ${state.show?.display_date ?? ''}`;
+  setPlayerSub(state.artist, state.show);
   window.ipc?.send('player-update', { title: `${track.title} — ${state.artist?.name}` });
   await window.ipc?.castLoad(url, castContentType(url), track.title ?? '', '');
   cast.paused = false; updateCastUI();
@@ -1403,11 +1533,11 @@ document.addEventListener('keydown', e => {
       e.preventDefault(); player.toggle(); break;
     case 'ArrowLeft':
       e.preventDefault();
-      if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10);
+      if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - (e.shiftKey ? 60 : 15));
       break;
     case 'ArrowRight':
       e.preventDefault();
-      if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+      if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + (e.shiftKey ? 60 : 15));
       break;
     case 'ArrowUp':
       e.preventDefault();
@@ -2457,10 +2587,11 @@ async function viewYears(artist) {
     const sorted = [...years].sort((a, b) => b.year - a.year);
     const totalShows = sorted.reduce((n, y) => n + (y.show_count ?? 0), 0);
     const heroColor  = artistColor(artist.name);
-    const artHtml    = artist.image_url
-      ? `<img src="${esc(artist.image_url)}" alt="">`
+    const artSrc  = artist.image_url ?? artist._wikiImg ?? null;
+    const artHtml = artSrc
+      ? `<img src="${esc(artSrc)}" alt="">`
       : `<span class="art-hero-init">${esc(artist.name[0]?.toUpperCase() ?? '?')}</span>`;
-    const artBg = artist.image_url ? '' : `background:${heroColor}`;
+    const artBg = artSrc ? '' : `background:${heroColor}`;
 
     $('contentInner').innerHTML = `
       <div class="artist-hero" style="--hero-bg:${heroColor}">
@@ -2492,6 +2623,15 @@ async function viewYears(artist) {
       </div>`;
     fadeIn();
     injectArtistBio(artist.name);
+    // Load Wikipedia image if not yet cached
+    if (!artSrc) {
+      lastfmArtistImage(artist.name).then(imgUrl => {
+        if (!imgUrl) return;
+        artist._wikiImg = imgUrl;
+        const heroArt = $('contentInner')?.querySelector('.artist-hero-art');
+        if (heroArt) { heroArt.innerHTML = `<img src="${esc(imgUrl)}" alt="">`; heroArt.style.background = ''; }
+      });
+    }
     $('contentInner').querySelectorAll('.year-card').forEach(c =>
       c.addEventListener('click', () => viewShows(artist, c.dataset.year)));
     $('btnTours').addEventListener('click',  () => viewTours(artist));
@@ -3069,15 +3209,19 @@ function renderShow(show, artist) {
     <div id="sourceArea"></div>`;
   fadeIn();
 
-  // Enrich with Last.fm artist image if Relisten doesn't have one
+  // Enrich with Wikipedia artist image if Relisten doesn't have one
   if (!artist.image_url) {
     lastfmArtistImage(artist.name).then(imgUrl => {
+      if (!imgUrl) return;
+      artist._wikiImg = imgUrl;
       const artEl = $('relistenShowArt');
-      if (!artEl || !imgUrl) return;
-      const img = new Image();
-      img.alt = artist.name;
-      img.onload = () => { artEl.innerHTML = ''; artEl.appendChild(img); artEl.style.background = ''; };
-      img.src = imgUrl;
+      if (artEl) {
+        const img = new Image();
+        img.alt = artist.name;
+        img.onload = () => { artEl.innerHTML = ''; artEl.appendChild(img); artEl.style.background = ''; };
+        img.src = imgUrl;
+      }
+      if (state.artist?.slug === artist.slug) setPlayerArt(artist, imgUrl, state.show);
     });
   }
 
@@ -3992,16 +4136,21 @@ async function nugsViewRelease(artist, containerId) {
       </div>`;
     fadeIn();
 
-    const playShow = { display_date: displayDate, venue: { name: venue }, _nugs: true, _art: showArtUrl };
+    const playShow = { display_date: displayDate, venue: { name: venue }, _nugs: true, _art: showArtUrl, _containerId: containerId };
 
     // Load artist image from Last.fm (nugs show art requires web session cookies we don't have)
     lastfmArtistImage(artist.name).then(imgUrl => {
+      if (!imgUrl) return;
+      artist._wikiImg = imgUrl;
+      playShow._artData = imgUrl;
       const artEl = $('nugsShowArt');
-      if (!artEl || !imgUrl) return;
-      const img = new Image();
-      img.alt = '';
-      img.onload = () => { artEl.innerHTML = ''; artEl.appendChild(img); artEl.style.background = ''; playShow._artData = imgUrl; };
-      img.src = imgUrl;
+      if (artEl) {
+        const img = new Image();
+        img.alt = '';
+        img.onload = () => { artEl.innerHTML = ''; artEl.appendChild(img); artEl.style.background = ''; };
+        img.src = imgUrl;
+      }
+      if (state.artist?.slug === artist.slug) setPlayerArt(artist, imgUrl, state.show);
     });
 
     $('nugsTrackList').querySelectorAll('.track-row').forEach(row =>
@@ -4244,7 +4393,7 @@ async function enrichArtistAvatars() {
   for (const item of items) {
     const name = item.querySelector('.artist-name')?.textContent?.trim();
     if (!name) continue;
-    const cached = _wikiImgCache.get(name);
+    const cached = _wikiCache.get(name)?.image ?? _wikiCache.get(name);
     if (cached === null) continue; // already failed
     const imgUrl = cached ?? await lastfmArtistImage(name);
     if (!imgUrl) continue;
@@ -4326,7 +4475,7 @@ async function init() {
     audio.volume = resume.volume ?? 0.8;
     $('volumeSlider').value = Math.round((resume.volume ?? 0.8) * 100);
     $('playerTitle').textContent = resume.title || 'Unknown Track';
-    $('playerSub').textContent   = `${resume.artistName ?? ''} · ${resume.showDate ?? ''}`;
+    setPlayerSub({ name: resume.artistName }, { display_date: resume.showDate });
     // Seek once metadata loads
     audio.addEventListener('loadedmetadata', () => {
       if (resume.currentTime > 0 && resume.currentTime < audio.duration - 2) {
