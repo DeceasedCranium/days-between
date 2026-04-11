@@ -176,8 +176,8 @@
     <button id="btnFullMode" style="display:none"></button>
   </div>
 
-  <audio id="audioEl"   preload="auto"></audio>
-  <audio id="preloadEl" preload="auto" style="display:none"></audio>
+  <audio id="audioEl"   preload="auto" crossorigin="anonymous"></audio>
+  <audio id="preloadEl" preload="auto" crossorigin="anonymous" style="display:none"></audio>
 
   <!-- Tape track picker -->
   <div id="tapePicker" class="tape-picker" style="display:none">
@@ -277,6 +277,7 @@
           <div class="shortcut-row"><kbd>?</kbd><span>This screen</span></div>
           <div class="shortcut-row"><kbd>Esc</kbd><span>Close overlay</span></div>
           <div class="shortcut-row"><kbd>↑ / ↓</kbd><span>Volume</span></div>
+          <div class="shortcut-row"><kbd>Ctrl+E</kbd><span>Toggle EQ bypass</span></div>
         </div>
       </div>
     </div>

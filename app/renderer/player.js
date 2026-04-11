@@ -3,10 +3,11 @@ import { $, fmt, esc, castContentType, artistColor, showToast, shuffle, safeInne
 import { state, settings, store, tapes, nugsAuth } from './state.js';
 import { nugsApi } from './api.js';
 import { lfm } from './lastfm.js';
+import { audio, preloadAudio, engine, CROSSFADE_SECS, getPrimaryElement } from './audio-engine.js';
+import { initEq, setBypass, isBypassed } from './eq-engine.js';
 
-/* ── Audio elements ──────────────────────────────── */
-export const audio        = $('audioEl');
-export const preloadAudio = $('preloadEl');
+export { audio, preloadAudio }; // re-export so existing importers (app.js) don't change
+
 export let playing = false;
 export function setPlaying(v) { playing = v; }
 
@@ -35,8 +36,12 @@ export function syncEq() { $('eqBars')?.classList.toggle('playing', playing); }
 export function preloadNext() {
   const nextIdx = state.queueIdx + 1;
   if (nextIdx < state.queue.length) {
-    const url = state.queue[nextIdx]?.mp3_url;
+    const next = state.queue[nextIdx];
+    // Only pre-buffer direct MP3/FLAC URLs — not nugs (signed/expiring) or HLS
+    const url  = (!next?._nugs && !next?.mp3_url?.includes('.m3u8'))
+      ? (next?.mp3_url ?? null) : null;
     if (url && preloadAudio.src !== url) preloadAudio.src = url;
+    else if (!url) preloadAudio.src = '';
   } else {
     preloadAudio.src = '';
   }
@@ -150,8 +155,55 @@ export async function preloadNextNugsStream() {
 }
 
 /* ── Player object ───────────────────────────────── */
+
+// UI-only track update — called by both player.load() and the gapless commit path.
+// Never touches audio.src; assumes the element is already playing.
+function _updateTrackUI(track, artist, show) {
+  playing = true;
+  syncEq();
+  $('btnPlay').innerHTML = '&#9646;&#9646;';
+  $('playerTitle').textContent = track.title || 'Unknown Track';
+  $('playerTitle').classList.add('clickable');
+  setPlayerSub(artist, show);
+  window.ipc?.send('player-update', { title: `${track.title} — ${artist?.name}` });
+  store.pushHistory(track, artist, show);
+  lfm.onTrackStart(track, artist, show);
+  window.ipc?.mprisUpdate({
+    status: 'Playing',
+    metadata: {
+      'mpris:trackid': `/tracks/${track.id ?? track.slug ?? 0}`,
+      'mpris:length':  (track.duration ?? 0) * 1000000,
+      'xesam:title':   track.title ?? 'Unknown',
+      'xesam:artist':  [artist?.name ?? ''],
+      'xesam:album':   show?.display_date ?? '',
+    },
+  });
+  setPlayerArt(artist, show?._artData ?? show?._art ?? artist?._wikiImg ?? null, show);
+  if (nowPlayingOpen) syncNowPlayingContent();
+  if (settings.getKey('notifications', false)) {
+    window.ipc?.send('notify-track', {
+      title: track.title || 'Unknown Track',
+      body:  `${artist?.name ?? ''} · ${show?.display_date ?? ''}`,
+    });
+  }
+  document.querySelectorAll('.track-row').forEach(r => {
+    r.classList.remove('playing');
+    if (r.querySelector('.track-num')) r.querySelector('.track-num').textContent = r.dataset.trackPos || '?';
+  });
+  const activeRow = document.querySelector(`[data-track-uuid="${track.uuid}"]`);
+  if (activeRow) { activeRow.classList.add('playing'); activeRow.querySelector('.track-num').textContent = '▶'; }
+  document.querySelectorAll('.artist-item').forEach(el => el.classList.remove('now-playing'));
+  if (artist?.slug) {
+    const npSel = artist._nugs
+      ? `.artist-item[data-nugs-slug="${CSS.escape(artist.slug)}"]`
+      : `.artist-item[data-slug="${CSS.escape(artist.slug)}"]`;
+    document.querySelector(npSel)?.classList.add('now-playing');
+  }
+  saveResumeStateExt();
+}
+
 export const player = {
-  load(track, artist, show) {
+  async load(track, artist, show) {
     if (cast.active) {
       state.artist = artist; state.show = show;
       state.playingArtist = artist; state.playingShow = show;
@@ -167,63 +219,34 @@ export const player = {
     state.playingArtist = artist; state.playingShow = show;
     const url = track?.stream_url ?? track?.mp3_url;
     if (!url) return;
+    engine.cancel(); // abort any in-progress gapless crossfade
+
+    // Initialise (or resume) the AudioContext and connect both audio elements
+    // to the EQ filter chain BEFORE touching the element src/play.  This must
+    // be awaited so the context is running and MediaElementSources are wired
+    // up before audio starts decoding — otherwise Chromium routes audio to
+    // speakers directly and then goes silent once the graph is connected.
+    await initEq().catch(err => console.error('[player] initEq:', err));
+
     destroyHls();
+    // getPrimaryElement() returns the _primary DOM element from audio-engine.js,
+    // which may be either audioEl or preloadEl after a gapless swap.
+    const primaryEl = getPrimaryElement();
     if (url.includes('.m3u8') && typeof Hls !== 'undefined' && Hls.isSupported()) {
       hlsInstance = new Hls({ enableWorker: false });
       hlsInstance.loadSource(url);
-      hlsInstance.attachMedia(audio);
+      hlsInstance.attachMedia(primaryEl); // must use actual DOM element, not proxy
       hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => audio.play().catch(() => {}));
       hlsInstance.on(Hls.Events.ERROR, (_, d) => {
         if (d.fatal) { destroyHls(); showToast('Stream error — try again'); }
       });
     } else {
-      audio.src = url;
+      audio.src = url; // proxy routes to _primary (= primaryEl)
       audio.play().catch(() => {});
     }
-    playing = true;
-    syncEq();
-    $('btnPlay').innerHTML = '&#9646;&#9646;';
-    $('playerTitle').textContent = track.title || 'Unknown Track';
-    $('playerTitle').classList.add('clickable');
-    setPlayerSub(artist, show);
-    window.ipc?.send('player-update', { title: `${track.title} — ${artist?.name}` });
-    store.pushHistory(track, artist, show);
-    lfm.onTrackStart(track, artist, show);
-    window.ipc?.mprisUpdate({
-      status: 'Playing',
-      metadata: {
-        'mpris:trackid':  `/tracks/${track.id ?? track.slug ?? 0}`,
-        'mpris:length':   (track.duration ?? 0) * 1000000,
-        'xesam:title':    track.title ?? 'Unknown',
-        'xesam:artist':   [artist?.name ?? ''],
-        'xesam:album':    show?.display_date ?? '',
-      },
-    });
-    setPlayerArt(artist, show?._artData ?? show?._art ?? artist?._wikiImg ?? null, show);
-    if (nowPlayingOpen) syncNowPlayingContent();
-    if (settings.getKey('notifications', false)) {
-      window.ipc?.send('notify-track', {
-        title: track.title || 'Unknown Track',
-        body:  `${artist?.name ?? ''} · ${show?.display_date ?? ''}`,
-      });
-    }
-    document.querySelectorAll('.track-row').forEach(r => {
-      r.classList.remove('playing');
-      if (r.querySelector('.track-num')) r.querySelector('.track-num').textContent = r.dataset.trackPos || '?';
-    });
-    const el = document.querySelector(`[data-track-uuid="${track.uuid}"]`);
-    if (el) { el.classList.add('playing'); el.querySelector('.track-num').textContent = '▶'; }
+    _updateTrackUI(track, artist, show);
     preloadNext();
     renderQueuePanel();
-    // Now-playing indicator in sidebar
-    document.querySelectorAll('.artist-item').forEach(el => el.classList.remove('now-playing'));
-    if (artist?.slug) {
-      const npSel = artist._nugs
-        ? `.artist-item[data-nugs-slug="${CSS.escape(artist.slug)}"]`
-        : `.artist-item[data-slug="${CSS.escape(artist.slug)}"]`;
-      document.querySelector(npSel)?.classList.add('now-playing');
-    }
-    saveResumeStateExt();
   },
 
   toggle() {
@@ -242,6 +265,7 @@ export const player = {
   },
 
   next() {
+    engine.cancel(); // abort any in-progress crossfade
     if (state.queueIdx < state.queue.length - 1) {
       state.queueIdx++;
       if (cast.active) castAdvanceTrack();
@@ -256,6 +280,7 @@ export const player = {
   },
 
   prev() {
+    engine.cancel(); // abort any in-progress crossfade
     if (cast.active) { window.ipc?.castSeek(0); return; }
     if (audio.currentTime > 3) { audio.currentTime = 0; return; }
     if (state.queueIdx > 0) {
@@ -338,6 +363,20 @@ audio.addEventListener('error', () => {
 audio.addEventListener('ended', () => {
   if (state.repeatMode === 'one') {
     audio.currentTime = 0; audio.play().catch(() => {});
+    return;
+  }
+  if (engine.commit()) {
+    // Gapless handoff — engine swapped _primary/_staging; new track is already playing
+    state.queueIdx++;
+    if (state.queueIdx >= state.queue.length) {
+      playing = false; syncEq();
+      document.dispatchEvent(new CustomEvent('player:queue-ended'));
+      return;
+    }
+    const track = state.queue[state.queueIdx];
+    _updateTrackUI(track, state.artist, state.show);
+    preloadNext();
+    renderQueuePanel();
   } else {
     playing = false; syncEq();
     player.next();
@@ -367,6 +406,7 @@ function trackAtShowTime(targetTime) {
 }
 
 export function seekToShowPct(pct) {
+  engine.cancel(); // abort any in-progress crossfade before seeking
   if (audio.duration) audio.currentTime = Math.max(0, Math.min(audio.duration, pct * audio.duration));
 }
 
@@ -411,6 +451,13 @@ audio.addEventListener('timeupdate', () => {
     $('npoFill').style.width    = pct;
     $('npoTimeCur').textContent = fmt(audio.currentTime);
     $('npoTimeDur').textContent = fmt(audio.duration);
+  }
+  // Gapless trigger — arm crossfade when close to end of a direct-URL track
+  const remaining = audio.duration - audio.currentTime;
+  if (isFinite(remaining) && remaining > 0 && remaining <= CROSSFADE_SECS
+      && state.repeatMode !== 'one') {
+    const next = state.queue[state.queueIdx + 1];
+    if (engine.canFire(next)) engine.arm(remaining);
   }
 });
 
@@ -954,6 +1001,17 @@ document.addEventListener('keydown', e => {
     case 'q': case 'Q': e.preventDefault(); $('btnQueue').click();  break;
     case '/': e.preventDefault(); $('searchToggle').click(); break;
     case 'm': case 'M': if (!e.altKey) { e.preventDefault(); $('btnMini').click(); } break;
+    case 'e': case 'E':
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const nowBypassed = !isBypassed();
+        setBypass(nowBypassed).catch(err => console.error('[player] setBypass:', err));
+        showToast(nowBypassed ? 'EQ bypassed' : 'EQ enabled');
+        // Sync the toggle if Settings is open
+        const toggleEl = document.getElementById('toggleEq');
+        if (toggleEl) toggleEl.checked = !nowBypassed;
+      }
+      break;
   }
 });
 

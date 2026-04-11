@@ -14,8 +14,14 @@ export async function wikiArtistData(name) {
   if (!name) return null;
   if (_wikiCache.has(name)) return _wikiCache.get(name);
   try {
-    const url  = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(name)}`;
-    const data = await fetch(url, { headers: { 'Accept': 'application/json' } }).then(r => r.json());
+    const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(name)}`;
+    const r   = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) {
+      // 404 means no Wikipedia article for this artist — not an error worth logging
+      _wikiCache.set(name, null);
+      return null;
+    }
+    const data   = await r.json();
     const result = {
       image:       data?.thumbnail?.source ?? data?.originalimage?.source ?? null,
       bio:         data?.extract            ?? null,

@@ -5,6 +5,7 @@ import { nugsApi } from './api.js';
 import { lfm, lastfmArtistImage, getLfmKey } from './lastfm.js';
 import { player, preloadNext } from './player.js';
 import { applyTheme, applyAccent, applyDensity } from './theme.js';
+import { initEq, setBand, setBypass, resetBands, getGains, isBypassed, BAND_LABELS } from './eq-engine.js';
 // Circular-safe imports (only used inside function bodies, never at init time)
 import { setBreadcrumb, viewShow, renderArtists } from './views-core.js';
 
@@ -645,6 +646,35 @@ export function viewSettings() {
     </div>
 
     <div class="settings-section">
+      <div class="settings-section-title">Audio</div>
+      <div class="settings-row">
+        <div class="settings-row-label">5-Band Equalizer
+          <div class="settings-row-sub">Boost or cut frequency bands · Ctrl+E to toggle bypass</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggleEq" ${isBypassed() ? '' : 'checked'}>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="eq-bands" id="eqBands">
+        ${BAND_LABELS.map((label, i) => {
+          const g = getGains()[i];
+          const val = g > 0 ? `+${g}` : `${g}`;
+          return `
+            <div class="eq-band">
+              <span class="eq-band-val" id="eqVal${i}">${val} dB</span>
+              <input class="eq-slider" type="range" min="-12" max="12" step="0.5"
+                     value="${g}" data-band="${i}" orient="vertical">
+              <span class="eq-band-label">${label}</span>
+            </div>`;
+        }).join('')}
+      </div>
+      <div class="eq-reset-row">
+        <button class="action-btn" id="btnEqReset">Reset</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <div class="settings-section-title">Last.fm</div>
       ${lfmSection}
     </div>
@@ -703,6 +733,30 @@ export function viewSettings() {
       btn.classList.add('active');
     }));
   $('toggleNotifications').addEventListener('change', e => settings.setKey('notifications', e.target.checked));
+
+  // ── EQ controls ──────────────────────────────────
+  $('toggleEq').addEventListener('change', e => {
+    setBypass(!e.target.checked).catch(err => console.error('[settings] setBypass:', err));
+  });
+  $('eqBands').querySelectorAll('.eq-slider').forEach(slider => {
+    slider.addEventListener('input', () => {
+      const i   = parseInt(slider.dataset.band, 10);
+      const val = parseFloat(slider.value);
+      setBand(i, val);
+      const valEl = $(`eqVal${i}`);
+      if (valEl) valEl.textContent = `${val > 0 ? '+' : ''}${val} dB`;
+      // Lazy-init EQ on first slider interaction (user gesture)
+      if (!isBypassed()) initEq().catch(err => console.error('[settings] initEq:', err));
+    });
+  });
+  $('btnEqReset').addEventListener('click', () => {
+    resetBands();
+    $('eqBands').querySelectorAll('.eq-slider').forEach((slider, i) => {
+      slider.value = 0;
+      const valEl = $(`eqVal${i}`);
+      if (valEl) valEl.textContent = '0 dB';
+    });
+  });
 
   // ── Last.fm controls ─────────────────────────────
   if ($('btnLfmDisconnect')) {

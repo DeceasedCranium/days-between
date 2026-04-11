@@ -101,24 +101,41 @@ app.whenReady().then(() => {
     }
   );
 
-  // Allow nugs.net image loads — loosen CORS on image responses
+  // Single onHeadersReceived handler — Electron only allows one at a time.
+  // Covers: archive.org audio (CORS for Web Audio API / EQ) + nugs image loads.
   session.defaultSession.webRequest.onHeadersReceived(
-    { urls: ['*://www.nugs.net/images/*', '*://cdn.nugs.net/images/*'] },
+    {
+      urls: [
+        '*://archive.org/*',
+        '*://*.archive.org/*',
+        '*://www.nugs.net/images/*',
+        '*://cdn.nugs.net/images/*',
+      ],
+    },
     (details, callback) => {
       const headers = { ...details.responseHeaders };
-      headers['access-control-allow-origin']  = ['*'];
-      headers['access-control-allow-headers'] = ['*'];
-      // Rewrite CSP to allow specific image domains rather than deleting the policy
-      const existingCsp = (headers['content-security-policy'] ?? [''])[0];
-      const imgDomains  = 'https://www.nugs.net https://cdn.nugs.net https://i.last.fm https://lastfm.freetls.fastly.net';
-      if (existingCsp && existingCsp.includes('img-src')) {
-        headers['content-security-policy'] = [existingCsp.replace(/img-src([^;]*)/, `img-src$1 ${imgDomains}`)];
-      } else if (existingCsp) {
-        headers['content-security-policy'] = [existingCsp + `; img-src 'self' data: blob: ${imgDomains}`];
+      const url     = details.url;
+
+      if (url.includes('archive.org')) {
+        // Force CORS headers so MediaElementAudioSource can read the PCM data
+        headers['access-control-allow-origin']  = ['*'];
+        headers['access-control-allow-methods'] = ['GET, OPTIONS'];
       } else {
-        headers['content-security-policy'] = [`img-src 'self' data: blob: ${imgDomains}`];
+        // Nugs image loads — allow origin and rewrite CSP
+        headers['access-control-allow-origin']  = ['*'];
+        headers['access-control-allow-headers'] = ['*'];
+        const existingCsp = (headers['content-security-policy'] ?? [''])[0];
+        const imgDomains  = 'https://www.nugs.net https://cdn.nugs.net https://i.last.fm https://lastfm.freetls.fastly.net';
+        if (existingCsp && existingCsp.includes('img-src')) {
+          headers['content-security-policy'] = [existingCsp.replace(/img-src([^;]*)/, `img-src$1 ${imgDomains}`)];
+        } else if (existingCsp) {
+          headers['content-security-policy'] = [existingCsp + `; img-src 'self' data: blob: ${imgDomains}`];
+        } else {
+          headers['content-security-policy'] = [`img-src 'self' data: blob: ${imgDomains}`];
+        }
+        delete headers['x-frame-options'];
       }
-      delete headers['x-frame-options'];
+
       callback({ responseHeaders: headers });
     }
   );
