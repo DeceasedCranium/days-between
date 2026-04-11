@@ -44,7 +44,8 @@
         "AppImage",
         "deb"
       ],
-      "category": "Audio"
+      "category": "Audio",
+      "maintainer": "Days Between <noreply@github.com>"
     }
   }
 }
