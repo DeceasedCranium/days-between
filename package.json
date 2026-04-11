@@ -1,15 +1,50 @@
 {
   "name": "days-between",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "description": "Days Between — Live music streaming desktop app, powered by Relisten",
   "main": "app/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
   },
   "dependencies": {
     "castv2-client": "*",
     "localforage": "^1.10.0",
-    "mpris-service": "*",
     "multicast-dns": "*"
+  },
+  "optionalDependencies": {
+    "mpris-service": "*"
+  },
+  "devDependencies": {
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.relisten.desktop",
+    "productName": "Relisten",
+    "files": [
+      "app/**/*",
+      "assets/**/*",
+      "!config.js"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Audio"
+    }
   }
 }

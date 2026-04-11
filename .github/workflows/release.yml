@@ -1,0 +1,75 @@
+name: Build & Package
+
+# Runs on every push to main.
+# Produces platform-specific installers as downloadable GitHub Actions artifacts.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      # Don't cancel other platform jobs if one fails
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Linux only — electron-builder needs rpmbuild/libopenjp2 for some targets;
+      # also installs dbus-dev so the optional mpris-service can compile.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libdbus-1-dev libglib2.0-dev
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build distributable
+        run: npm run dist
+        env:
+          # Skip macOS code-signing — unsigned DMG is fine for artifact distribution.
+          # Set CSC_IDENTITY_AUTO_DISCOVERY=false so electron-builder doesn't error
+          # when no signing certificate is present in the CI environment.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # Upload only the installer files — skip yml/blockmap metadata files.
+      - name: Upload macOS artifacts
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-mac
+          path: dist/*.dmg
+          if-no-files-found: warn
+
+      - name: Upload Windows artifacts
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          path: |
+            dist/*.exe
+          if-no-files-found: warn
+
+      - name: Upload Linux artifacts
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: warn
