@@ -15,7 +15,14 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     frame: false,
-    backgroundColor: '#0d0f14',
+    // Transparency — lets CSS rgba backgrounds + backdrop-filter create the
+    // glass effect.  On macOS, vibrancy handles system-level frosted glass.
+    // On Linux/Wayland the compositor (KWin) blurs the desktop through the
+    // alpha channel; CSS backdrop-filter adds depth within the app itself.
+    transparent: true,
+    backgroundColor: '#00000000',
+    vibrancy: 'under-window',       // macOS only — no-op on Linux/Windows
+    visualEffectState: 'active',    // macOS: keep effect when window is focused
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

@@ -57,6 +57,11 @@ export function createEl(tag, attrs = {}, ...children) {
 // XSS-safe innerHTML — strips on* attributes and javascript: hrefs.
 // Primary protection is always esc() at the call site; this is defence-in-depth.
 // For new code prefer createEl; use this as a drop-in wrapper for template-string blocks.
+//
+// When targeting #contentInner we trigger a CSS enter-animation after the swap.
+// The DOM update is always synchronous so event-listener wiring that follows the
+// call works on the new DOM immediately.  The animation is a cosmetic overlay
+// driven by toggling the .vt-enter class via requestAnimationFrame.
 export function safeInnerHTML(el, html) {
   const t = document.createElement('template');
   t.innerHTML = html;
@@ -66,8 +71,14 @@ export function safeInnerHTML(el, html) {
       if (a.name === 'href' && /^javascript:/i.test(a.value)) node.removeAttribute(a.name);
     });
   });
+  // Synchronous DOM update — must happen before any caller queries the new nodes
   el.innerHTML = '';
   el.appendChild(t.content);
+  // Animate the new content in via CSS (rAF ensures class is added after paint)
+  if (el?.id === 'contentInner') {
+    el.classList.remove('vt-enter');
+    requestAnimationFrame(() => el.classList.add('vt-enter'));
+  }
 }
 
 // Simple debounce

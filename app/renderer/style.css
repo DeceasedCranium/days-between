@@ -3239,3 +3239,174 @@ html, body { font-size: 13.5px; }
   justify-content: flex-end;
   padding: 10px 0 2px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   v1.4 'Glass' UI  ·  Full Apple Overhaul
+   !important is intentional — these rules must win over theme overrides.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Typography ──────────────────────────────────────────────────── */
+html, body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+               'Segoe UI', system-ui, sans-serif !important;
+  font-size: 13.5px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Noticeably transparent — on Wayland the compositor blurs the desktop
+     through; on macOS vibrancy handles it. 0.82 is clearly different from
+     the original fully-opaque dark.                                       */
+  background: rgba(10, 12, 18, 0.91) !important;
+}
+
+/* ── Titlebar — glass ────────────────────────────────────────────── */
+.titlebar {
+  background: rgba(8, 10, 15, 0.82) !important;
+  backdrop-filter: blur(40px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(180%) !important;
+  border-bottom: none !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.07) !important;
+  border-radius: 0 !important;
+}
+
+/* ── Sidebar — distinct frosted-glass depth layer ────────────────── */
+.sidebar {
+  /* Noticeably lighter than the body so it reads as a separate surface */
+  background: rgba(18, 21, 30, 0.88) !important;
+  backdrop-filter: blur(40px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(160%) !important;
+  border-right: none !important;
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.07),
+              4px 0 24px rgba(0, 0, 0, 0.4) !important;
+}
+.sidebar-search {
+  border-bottom: none !important;
+  padding: 10px 12px 8px !important;
+}
+.sidebar-search input {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  border-radius: 10px !important;
+  padding: 8px 14px !important;
+  font-family: inherit !important;
+  font-size: 12.5px !important;
+}
+.sidebar-search input:focus {
+  background: rgba(255, 255, 255, 0.09) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+/* ── Nav source buttons ──────────────────────────────────────────── */
+.sidebar-nav { padding: 6px 8px 2px !important; gap: 2px !important; }
+.nav-btn {
+  font-family: inherit !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  color: var(--text3) !important;
+  padding: 6px 4px !important;
+  border-radius: 7px !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.nav-btn:hover  { background: rgba(255,255,255,0.07) !important; color: var(--text2) !important; }
+.nav-btn.active { background: rgba(255,255,255,0.11) !important; color: var(--text)  !important; }
+
+/* ── Sidebar section labels (ARTISTS, TRENDING…) ────────────────── */
+.sidebar-section-label,
+.source-section-label,
+.artist-section-header {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  color: var(--text3) !important;
+  padding: 12px 14px 4px !important;
+  opacity: 0.7;
+}
+
+/* ── Artist list items — pill selection ──────────────────────────── */
+.artist-item {
+  border-radius: 8px !important;
+  margin: 1px 8px !important;
+  padding: 7px 10px 7px 12px !important;
+  border-left: none !important;
+  font-size: 13px !important;
+  transition: background 0.12s, color 0.12s !important;
+}
+.artist-item:hover  { background: rgba(255,255,255,0.07) !important; color: var(--text) !important; border-left: none !important; }
+.artist-item.active { background: rgba(255,255,255,0.13) !important; color: var(--text) !important; border-left: none !important; box-shadow: none !important; }
+.artist-item.active .artist-avatar { box-shadow: 0 0 0 2px var(--accent), 0 2px 10px rgba(0,0,0,0.4) !important; }
+.artist-item.now-playing .artist-name { color: var(--accent) !important; }
+
+/* ── Main content area ───────────────────────────────────────────── */
+.content { background: transparent !important; }
+
+/* ── Breadcrumb ──────────────────────────────────────────────────── */
+.breadcrumb {
+  border-bottom: none !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) !important;
+  background: transparent !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   v1.4  Phase 2 — Cards, Floating Player, Grid, View Transitions
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Kill blocky cards — glass surface, large radius ────────────── */
+.year-card,
+.show-card,
+.decade-card,
+.stat-card {
+  background: rgba(255, 255, 255, 0.055) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: background 0.15s, border-color 0.15s, transform 0.15s,
+              box-shadow 0.15s !important;
+}
+.year-card:hover,
+.show-card:hover,
+.decade-card:hover,
+.stat-card:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  border-color: rgba(255, 255, 255, 0.20) !important;
+  transform: translateY(-4px) !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45) !important;
+}
+
+/* ── Spacious grids ──────────────────────────────────────────────── */
+.year-grid  { gap: 24px !important; }
+.show-cards { gap: 24px !important; }
+.decade-grid { gap: 24px !important; }
+.stats-grid  { gap: 24px !important; }
+
+/* ── Floating player bar ─────────────────────────────────────────── */
+/* The player sits in the root flex column.  margin shrinks it inward
+   so it appears to hover above the page; border-radius completes the pill. */
+.player {
+  margin: 0 16px 16px !important;
+  border-radius: 16px !important;
+  background: rgba(8, 10, 16, 0.90) !important;
+  backdrop-filter: blur(50px) !important;
+  -webkit-backdrop-filter: blur(50px) !important;
+  border-top: none !important;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.08),
+    0 24px 48px rgba(0,0,0,0.55),
+    0 8px 16px rgba(0,0,0,0.35) !important;
+}
+
+/* ── View enter animation for #contentInner ──────────────────────── */
+/* safeInnerHTML() updates the DOM synchronously then adds .vt-enter via rAF.
+   The class is removed before the update so re-navigating always re-triggers. */
+@keyframes vt-slide-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+#contentInner.vt-enter {
+  animation: 240ms cubic-bezier(0, 0, 0.2, 1) both vt-slide-in;
+}
