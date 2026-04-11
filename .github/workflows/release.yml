@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+# Opt into Node.js 24 for action runners now, ahead of the June 2026 forced migration.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
@@ -21,10 +25,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       # Linux only — electron-builder needs rpmbuild/libopenjp2 for some targets;
