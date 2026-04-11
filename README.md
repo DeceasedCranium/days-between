@@ -10,17 +10,14 @@ Built with Electron, no bundler. All your data stays local on your machine.
 
 ## Download
 
-Pre-built installers are produced automatically by GitHub Actions on every push to `main`.
-
-1. Go to the [**Actions** tab](https://github.com/DeceasedCranium/days-between/actions)
-2. Open the latest **Build & Package** run
-3. Scroll to **Artifacts** and download the package for your platform:
+Grab the latest installer from the [**Releases page**](https://github.com/DeceasedCranium/days-between/releases/latest) — no account required.
 
 | Platform | File | Notes |
 |----------|------|-------|
-| macOS | `dist-mac` → `.dmg` | Open DMG, drag to Applications |
-| Windows | `dist-windows` → `.exe` | Run the NSIS installer or use the portable EXE |
-| Linux | `dist-linux` → `.AppImage` / `.deb` | `chmod +x` the AppImage, or `dpkg -i` the deb |
+| macOS (Apple Silicon) | `.dmg` | Open DMG, drag to Applications |
+| Windows | `Relisten Setup …exe` (installer) or `Relisten …exe` (portable) | Run the installer |
+| Linux | `.AppImage` | `chmod +x`, then run |
+| Linux (Debian/Ubuntu) | `.deb` | `sudo dpkg -i` |
 
 > **No Electron installation required** — the installers bundle everything.
 
