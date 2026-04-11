@@ -8,6 +8,24 @@ Built with Electron, no bundler. All your data stays local on your machine.
 
 ---
 
+## Download
+
+Pre-built installers are produced automatically by GitHub Actions on every push to `main`.
+
+1. Go to the [**Actions** tab](https://github.com/DeceasedCranium/days-between/actions)
+2. Open the latest **Build & Package** run
+3. Scroll to **Artifacts** and download the package for your platform:
+
+| Platform | File | Notes |
+|----------|------|-------|
+| macOS | `dist-mac` → `.dmg` | Open DMG, drag to Applications |
+| Windows | `dist-windows` → `.exe` | Run the NSIS installer or use the portable EXE |
+| Linux | `dist-linux` → `.AppImage` / `.deb` | `chmod +x` the AppImage, or `dpkg -i` the deb |
+
+> **No Electron installation required** — the installers bundle everything.
+
+---
+
 ## Features
 
 ### Playback
@@ -44,12 +62,18 @@ Built with Electron, no bundler. All your data stays local on your machine.
 
 ## Requirements
 
+**Pre-built installers** — no extra dependencies. Download from the [Actions tab](https://github.com/DeceasedCranium/days-between/actions) and run the installer for your platform.
+
+**Running from source** requires:
+- [Node.js](https://nodejs.org/) 18+
 - [Electron](https://www.electronjs.org/) 39+ (uses native ES modules — no bundler step)
 - On Arch / CachyOS: `sudo pacman -S electron39`
 
 ---
 
 ## Setup
+
+### From source (development)
 
 ```bash
 git clone https://github.com/DeceasedCranium/days-between.git
@@ -62,6 +86,13 @@ cp config.example.js config.js
 # Free key at https://www.last.fm/api/account/create
 
 electron39 .
+```
+
+### Build installers locally
+
+```bash
+npm run dist
+# Output: dist/  (DMG / EXE / AppImage+deb depending on your platform)
 ```
 
 ### Last.fm
