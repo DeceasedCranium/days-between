@@ -79,6 +79,16 @@ All user data is stored locally:
 - **[hls.js](https://github.com/video-dev/hls.js)** — HLS streaming library (Apache 2.0)
 - **[castv2-client](https://github.com/thibauts/node-castv2-client)** — Chromecast protocol (MIT)
 
+## Disclaimer & Educational Use
+
+This is a personal portfolio project built to learn Electron, HLS streaming, and browser security techniques (Content Security Policy, ES module architecture, XSS mitigation). It is not affiliated with, endorsed by, or in any way connected to Nugs.net or Relisten.
+
+- **Nugs.net content** is only accessible to users with an active nugs.net subscription. This app authenticates using your own credentials and does not bypass, circumvent, or share any paywall.
+- **Relisten content** is served via the public Relisten API and is freely available per that project's terms.
+- This app does not redistribute, download, or cache any copyrighted audio or video. All streams are fetched live directly from the providers' own CDNs.
+
+Use of this software is solely your responsibility. Review each service's terms of use before use.
+
 ## License
 
 MIT

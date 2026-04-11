@@ -101,15 +101,23 @@ app.whenReady().then(() => {
     }
   );
 
-  // Allow nugs.net image loads — strip CORS restrictions on image responses
+  // Allow nugs.net image loads — loosen CORS on image responses
   session.defaultSession.webRequest.onHeadersReceived(
     { urls: ['*://www.nugs.net/images/*', '*://cdn.nugs.net/images/*'] },
     (details, callback) => {
       const headers = { ...details.responseHeaders };
       headers['access-control-allow-origin']  = ['*'];
       headers['access-control-allow-headers'] = ['*'];
-      // Remove CSP and X-Frame-Options that could block loading
-      delete headers['content-security-policy'];
+      // Rewrite CSP to allow specific image domains rather than deleting the policy
+      const existingCsp = (headers['content-security-policy'] ?? [''])[0];
+      const imgDomains  = 'https://www.nugs.net https://cdn.nugs.net https://i.last.fm https://lastfm.freetls.fastly.net';
+      if (existingCsp && existingCsp.includes('img-src')) {
+        headers['content-security-policy'] = [existingCsp.replace(/img-src([^;]*)/, `img-src$1 ${imgDomains}`)];
+      } else if (existingCsp) {
+        headers['content-security-policy'] = [existingCsp + `; img-src 'self' data: blob: ${imgDomains}`];
+      } else {
+        headers['content-security-policy'] = [`img-src 'self' data: blob: ${imgDomains}`];
+      }
       delete headers['x-frame-options'];
       callback({ responseHeaders: headers });
     }

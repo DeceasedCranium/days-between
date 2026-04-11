@@ -1,0 +1,87 @@
+/* ── utils.js — shared helpers, no dependencies ─── */
+
+export const $ = (id) => document.getElementById(id);
+
+export const fmt = (secs) => {
+  if (!secs || isNaN(secs)) return '0:00';
+  return `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
+};
+
+export const stars = (r) => r ? `★ ${r.toFixed(1)}` : '';
+
+export const esc = (s) =>
+  String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Infer a MIME type from a stream URL for Chromecast
+export function castContentType(url) {
+  const u = (url ?? '').split('?')[0].toLowerCase();
+  if (u.endsWith('.m3u8')) return 'application/x-mpegURL';
+  if (u.endsWith('.flac')) return 'audio/flac';
+  if (u.endsWith('.m4a'))  return 'audio/mp4';
+  if (u.endsWith('.mp4') || u.endsWith('.m4v')) return 'video/mp4';
+  return 'audio/mpeg';
+}
+
+// Deterministic hue from a string — used for art placeholders
+export function artistColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return `hsl(${Math.abs(h) % 360}, 45%, 28%)`;
+}
+
+// Toast notification
+let toastTimer = null;
+export function showToast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('visible'), 2200);
+}
+
+// Safe imperative DOM builder — no innerHTML
+export function createEl(tag, attrs = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'className')        el.className   = v;
+    else if (k === 'textContent') el.textContent = v;
+    else el.setAttribute(k, v);
+  }
+  for (const child of children) {
+    if (typeof child === 'string') el.append(document.createTextNode(child));
+    else if (child) el.append(child);
+  }
+  return el;
+}
+
+// XSS-safe innerHTML — strips on* attributes and javascript: hrefs.
+// Primary protection is always esc() at the call site; this is defence-in-depth.
+// For new code prefer createEl; use this as a drop-in wrapper for template-string blocks.
+export function safeInnerHTML(el, html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  t.content.querySelectorAll('*').forEach(node => {
+    [...node.attributes].forEach(a => {
+      if (/^on/i.test(a.name)) node.removeAttribute(a.name);
+      if (a.name === 'href' && /^javascript:/i.test(a.value)) node.removeAttribute(a.name);
+    });
+  });
+  el.innerHTML = '';
+  el.appendChild(t.content);
+}
+
+// Simple debounce
+export function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+// Fisher-Yates shuffle — pure, returns a new array
+export function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}

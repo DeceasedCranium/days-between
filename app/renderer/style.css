@@ -1614,6 +1614,34 @@ html[data-theme="light"] .sidebar  { background: #f0f2f5; border-color: #d4d8de;
 .theme-swatch-label    { font-size: 10px; color: var(--text3); text-align: center; margin-top: 4px; }
 .theme-swatch-wrap     { display: flex; flex-direction: column; align-items: center; }
 
+/* Accent preset picker */
+.accent-presets { display: flex; gap: 8px; flex-wrap: wrap; }
+.accent-preset-wrap { display: flex; flex-direction: column; align-items: center; }
+.accent-preset {
+  width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+  border: 3px solid transparent; transition: border-color 0.15s, transform 0.1s;
+  flex-shrink: 0;
+}
+.accent-preset:hover  { transform: scale(1.15); }
+.accent-preset.active { border-color: var(--text); }
+.accent-preset-label  { font-size: 9px; color: var(--text3); margin-top: 3px; }
+
+/* Density toggle */
+.density-toggle { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.density-btn {
+  padding: 5px 14px; font-size: 12px; font-weight: 500;
+  background: none; border: none; color: var(--text2); cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.density-btn:hover  { background: var(--bg3); color: var(--text); }
+.density-btn.active { background: var(--accent); color: #fff; }
+
+/* Compact density */
+html.density-compact .show-row     { padding: 6px 14px; }
+html.density-compact .track-row    { padding: 5px 12px; }
+html.density-compact .year-card    { padding: 10px 14px; }
+html.density-compact .show-row-title { font-size: 12px; }
+html.density-compact .track-title  { font-size: 12px; }
+
 /* ── Track stats button ──────────────────────────── */
 .track-stats-btn {
   opacity: 0;

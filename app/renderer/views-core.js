@@ -1,0 +1,1524 @@
+/* ── views-core.js — Relisten browsing: artists, years, shows, search ── */
+import { $, esc, fmt, stars, artistColor, showToast, shuffle, safeInnerHTML } from './utils.js';
+import { state, store, settings, nav, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
+import { api } from './api.js';
+import { lastfmArtistImage, injectArtistBio, lastfmSimilarArtists } from './lastfm.js';
+import {
+  player, queueAndPlay, flatTracks, radioMode, setRadioMode,
+  setPlayerArt, showTapePickerForTrack, openCompanion, closeCompanion,
+} from './player.js';
+// Circular-safe: views-nugs imports from views-core, but these are only ever
+// called inside function bodies (event handlers / async calls), never at init.
+import { nugsViewArtist, nugsViewRelease, searchNugsLocal } from './views-nugs.js';
+
+/* ── View helpers ────────────────────────────────── */
+export const showLoading = () => {
+  $('contentInner').innerHTML = `
+    <div class="skeleton-list">
+      ${Array.from({length: 6}, () => `
+        <div class="skeleton-row">
+          <div class="skel skel-date"></div>
+          <div class="skel skel-venue"></div>
+          <div class="skel skel-badge"></div>
+        </div>`).join('')}
+    </div>`;
+};
+
+export const fadeIn = (el = $('contentInner')) => {
+  el.classList.remove('content-fadein');
+  void el.offsetWidth;
+  el.classList.add('content-fadein');
+};
+
+export const showError = (msg) => {
+  $('contentInner').innerHTML = `<div class="error-state"><div class="icon">⚠️</div><p>${esc(msg)}</p></div>`;
+};
+
+/* ── Breadcrumb ──────────────────────────────────── */
+// Cache search elements — they get re-parented into breadcrumb on every nav
+const searchToggleEl = $('searchToggle');
+const searchInlineEl = $('searchInline');
+
+export function setBreadcrumb(parts) {
+  // Reset style overrides set by nugs split-view
+  const ci = $('contentInner');
+  ci.style.overflow = '';
+  ci.style.padding  = '';
+  // Close companion panel on any page navigation
+  $('companionPanel')?.classList.remove('open');
+  $('breadcrumb').innerHTML = '';
+  parts.forEach((p, i) => {
+    const el = document.createElement('span');
+    el.className = i === parts.length - 1 ? 'bc-current' : 'bc-item';
+    el.textContent = p.label;
+    if (p.onClick || p.fn) el.addEventListener('click', p.onClick ?? p.fn);
+    $('breadcrumb').appendChild(el);
+    if (i < parts.length - 1) {
+      const sep = document.createElement('span');
+      sep.className = 'bc-sep'; sep.textContent = '›';
+      $('breadcrumb').appendChild(sep);
+    }
+  });
+  $('breadcrumb').appendChild(searchToggleEl);
+  $('breadcrumb').appendChild(searchInlineEl);
+}
+
+/* ── navToCurrentArtist / tryRadio ──────────────── */
+export function navToCurrentArtist() {
+  const artist = state.playingArtist;
+  if (!artist) return;
+  document.querySelectorAll('.artist-item').forEach(i => i.classList.remove('active'));
+  const sel = artist._nugs
+    ? `.artist-item[data-nugs-slug="${CSS.escape(artist.slug)}"]`
+    : `.artist-item[data-slug="${CSS.escape(artist.slug)}"]`;
+  document.querySelector(sel)?.classList.add('active');
+  if (artist._nugs) nugsViewArtist(artist);
+  else viewYears(artist);
+}
+
+export async function tryRadio() {
+  if (!radioMode || !state.artist?.name) return;
+  showToast('Artist Radio: finding related artist…');
+  try {
+    const similar  = await lastfmSimilarArtists(state.artist.name);
+    const lowerSim = new Set(similar.map(n => n.toLowerCase()));
+    const matches  = state.artists.filter(a => lowerSim.has(a.name.toLowerCase()));
+    if (!matches.length) { showToast('Radio: no similar artists found in library'); return; }
+    const pick = matches[Math.floor(Math.random() * Math.min(matches.length, 8))];
+    showToast(`Artist Radio → ${pick.name}`);
+    state.artist = pick;
+    document.querySelectorAll('.artist-item').forEach(i => i.classList.remove('active'));
+    document.querySelector(`[data-slug="${CSS.escape(pick.slug)}"]`)?.classList.add('active');
+    const show     = await api.random(pick.slug);
+    const showData = await api.show(pick.slug, show.display_date);
+    const src = (showData.sources ?? []).sort((a, b) =>
+      (b.is_soundboard - a.is_soundboard) || ((b.avg_rating ?? 0) - (a.avg_rating ?? 0)))[0];
+    if (src?.tracks?.length) { queueAndPlay(src.tracks, pick, showData, 0); viewShow(pick, show.display_date); }
+  } catch (err) { console.error('[views-core] tryRadio', err); showToast('Radio: could not load show'); }
+}
+
+/* ── On This Date ────────────────────────────────── */
+export async function viewToday() {
+  nav.record(viewToday, []);
+  showLoading();
+  const now    = new Date();
+  const month  = now.getMonth() + 1;
+  const day    = now.getDate();
+  const label  = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  const dayOrd = day + (['th','st','nd','rd'][day % 10 > 3 || ~~(day % 100 / 10) === 1 ? 0 : day % 10] ?? 'th');
+  setBreadcrumb([{ label: `On This Day — ${label}` }]);
+  try {
+    const data  = await api.onDate(month, day);
+    const shows = data.shows ?? data ?? [];
+    if (!shows.length) {
+      $('contentInner').innerHTML = `<div class="error-state"><p>No shows found for ${esc(label)}</p></div>`;
+      return;
+    }
+
+    const byYear = {};
+    for (const s of shows) {
+      const yr = (s.display_date ?? '').slice(0, 4);
+      (byYear[yr] ??= []).push(s);
+    }
+    const years = Object.keys(byYear).sort((a, b) => b - a);
+    const totalArtists = new Set(shows.map(s => s.artist_slug)).size;
+
+    safeInnerHTML($('contentInner'), `
+      <div class="otd-hero">
+        <div class="otd-hero-date">
+          <span class="otd-month">${esc(now.toLocaleDateString('en-US',{month:'long'}))}</span>
+          <span class="otd-day">${esc(dayOrd)}</span>
+        </div>
+        <div class="otd-hero-meta">
+          <div class="otd-hero-count">${shows.length} shows</div>
+          <div class="otd-hero-sub">${totalArtists} artists · ${years.length} years of recordings</div>
+        </div>
+      </div>
+      <div id="otdTimeline">${years.map(yr => `
+        <div class="otd-year-group">
+          <div class="otd-year-label">${esc(yr)}</div>
+          <div class="otd-year-shows">
+            ${byYear[yr].map(s => {
+              const artist   = state.artists.find(a => a.slug === s.artist_slug) ?? { name: s.artist_name ?? s.artist_slug ?? '', slug: s.artist_slug ?? '' };
+              const color    = artistColor(artist.name);
+              const init     = esc((artist.name[0] ?? '?').toUpperCase());
+              const imgStyle = artist.image_url ? `background-image:url('${esc(artist.image_url)}')` : `background:${color}`;
+              return `<div class="otd-row" data-slug="${esc(s.artist_slug ?? '')}" data-date="${esc(s.display_date)}">
+                <div class="otd-avatar" style="${imgStyle}" data-name="${esc(artist.name)}">${artist.image_url ? '' : `<span>${init}</span>`}</div>
+                <div class="otd-info">
+                  <div class="otd-artist-name">${esc(artist.name)}</div>
+                  <div class="otd-venue-name">${esc(s.venue?.name ?? '')}${s.venue?.location ? ` · ${esc(s.venue.location)}` : ''}</div>
+                </div>
+                <div class="otd-badges">
+                  ${s.has_soundboard_source ? '<span class="badge badge-sbd">SBD</span>' : ''}
+                  ${s.avg_rating ? `<span class="otd-rating">${stars(s.avg_rating)}</span>` : ''}
+                </div>
+                <button class="otd-play-btn" title="Play best recording">▶</button>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`).join('')}
+      </div>`);
+
+    fadeIn();
+
+    $('otdTimeline').querySelectorAll('.otd-row').forEach(row => {
+      const artist = state.artists.find(a => a.slug === row.dataset.slug) ?? { name: row.dataset.slug, slug: row.dataset.slug };
+      row.addEventListener('click', e => {
+        if (e.target.classList.contains('otd-play-btn')) return;
+        state.artist = artist; viewShow(artist, row.dataset.date);
+      });
+      row.querySelector('.otd-play-btn').addEventListener('click', async e => {
+        e.stopPropagation();
+        state.artist = artist;
+        showLoading();
+        try {
+          const show = await api.show(artist.slug, row.dataset.date);
+          const src  = (show.sources ?? []).sort((a,b) => (b.is_soundboard - a.is_soundboard) || (b.avg_rating - a.avg_rating))[0];
+          if (src?.tracks?.length) { queueAndPlay(src.tracks, artist, show, 0); viewShow(artist, row.dataset.date); }
+          else viewShow(artist, row.dataset.date);
+        } catch { viewShow(artist, row.dataset.date); }
+      });
+    });
+
+    for (const el of $('otdTimeline').querySelectorAll('.otd-avatar[data-name]')) {
+      const name = el.dataset.name;
+      if (el.querySelector('img') || !name) continue;
+      lastfmArtistImage(name).then(url => {
+        if (!url || el.querySelector('img')) return;
+        const img = new Image(); img.alt = name;
+        img.onload = () => { el.innerHTML = ''; el.appendChild(img); el.style.backgroundImage = ''; };
+        img.src = url;
+      });
+    }
+  } catch(e) { console.error('[views-core] viewToday', e); showError(e.message); }
+}
+
+/* ── Welcome ─────────────────────────────────────── */
+export async function viewWelcome() {
+  nav.record(viewWelcome, []);
+  $('breadcrumb').innerHTML = '';
+  $('breadcrumb').appendChild(searchToggleEl);
+  $('breadcrumb').appendChild(searchInlineEl);
+  const now   = new Date();
+  const label = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+
+  safeInnerHTML($('contentInner'), `
+    <div class="welcome">
+      <div class="welcome-logo">D</div>
+      <h2>Days Between</h2>
+      <p>Stream 70,000+ live concert recordings from Phish, Grateful Dead, and thousands more.
+         Powered by <strong style="color:var(--accent)">Relisten</strong>.</p>
+      <div class="welcome-actions">
+        <button class="action-btn primary" id="btnWelcomeRandom">🎲 Random Show</button>
+        <button class="action-btn" id="btnWelcomeRecent">🆕 Recently Added</button>
+      </div>
+      <div class="welcome-sotd" id="welcomeSotd">
+        <div class="welcome-otd-title">🎵 Show of the Day</div>
+        <div id="sotdContent"><div class="loading" style="height:50px;font-size:12px"><div class="spinner"></div></div></div>
+      </div>
+      <div class="welcome-otd">
+        <div class="welcome-otd-title">On This Day — ${esc(label)}</div>
+        <div id="welcomeOtd"><div class="loading" style="height:60px;font-size:12px"><div class="spinner"></div>Loading…</div></div>
+      </div>
+    </div>`);
+
+  $('btnWelcomeRecent').addEventListener('click', () => viewRecent());
+  $('btnWelcomeRandom').addEventListener('click', async () => {
+    if (!state.artists.length) return;
+    const artist = state.artists[Math.floor(Math.random() * state.artists.length)];
+    state.artist = artist;
+    document.querySelectorAll('.artist-item').forEach(i => i.classList.remove('active'));
+    document.querySelector(`[data-slug="${CSS.escape(artist.slug)}"]`)?.classList.add('active');
+    showLoading();
+    try {
+      const show = await api.random(artist.slug);
+      viewShow(artist, show.display_date);
+    } catch(e) { showError(e.message); }
+  });
+
+  // Show of the Day — deterministic daily pick from trending
+  (async () => {
+    try {
+      const today  = new Date().toISOString().slice(0, 10);
+      const cached = JSON.parse(localStorage.getItem('sotd') || 'null');
+      let sotd = (cached?.date === today) ? cached.show : null;
+      if (!sotd) {
+        const data  = await api.trending();
+        const shows = (data.shows ?? data ?? []).filter(s => s.artist_slug);
+        if (shows.length) {
+          const seed = today.replace(/-/g, '');
+          sotd = shows[parseInt(seed.slice(-4)) % shows.length];
+          localStorage.setItem('sotd', JSON.stringify({ date: today, show: sotd }));
+        }
+      }
+      if (!sotd) { $('welcomeSotd').style.display = 'none'; return; }
+      const artist = state.artists.find(a => a.slug === sotd.artist_slug) || { name: sotd.artist_slug, slug: sotd.artist_slug };
+      safeInnerHTML($('sotdContent'), `
+        <div class="sotd-card" data-slug="${esc(sotd.artist_slug)}" data-date="${esc(sotd.display_date)}">
+          <div class="sotd-artist">${esc(artist.name)}</div>
+          <div class="sotd-meta">${esc(sotd.display_date)}${sotd.venue?.name ? ' · ' + esc(sotd.venue.name) : ''}${sotd.venue?.location ? ', ' + esc(sotd.venue.location) : ''}</div>
+          ${sotd.avg_rating ? `<div class="sotd-rating">${'★'.repeat(Math.round(sotd.avg_rating))} ${sotd.avg_rating.toFixed(1)}</div>` : ''}
+          <button class="action-btn primary sotd-play" style="margin-top:8px">▶ Play Show</button>
+        </div>`);
+      $('sotdContent').querySelector('.sotd-card').addEventListener('click', () => viewShow(artist, sotd.display_date));
+      $('sotdContent').querySelector('.sotd-play').addEventListener('click', async e => {
+        e.stopPropagation();
+        showLoading();
+        try { viewShow(artist, sotd.display_date); } catch { /* non-critical */ }
+      });
+    } catch { $('welcomeSotd').style.display = 'none'; }
+  })();
+
+  try {
+    const data  = await api.onDate(now.getMonth() + 1, now.getDate());
+    const shows = (data.shows ?? data ?? []).slice(0, 20);
+    if (!shows.length) {
+      $('welcomeOtd').innerHTML = `<div style="font-size:12px;color:var(--text3)">No shows found for today.</div>`;
+      return;
+    }
+    safeInnerHTML($('welcomeOtd'), shows.map(s => {
+      const artist = state.artists.find(a => a.slug === s.artist_slug) || { name: s.artist_slug, slug: s.artist_slug };
+      return `<div class="otd-show-row" data-slug="${esc(s.artist_slug)}" data-date="${esc(s.display_date)}" style="margin-bottom:5px;padding:8px 12px">
+        <div class="otd-artist" style="min-width:130px">${esc(artist.name)}</div>
+        <div class="otd-year">${esc((s.display_date||'').slice(0,4))}</div>
+        <div class="otd-venue">${esc(s.venue?.name??'')}</div>
+      </div>`;
+    }).join(''));
+    $('welcomeOtd').querySelectorAll('.otd-show-row').forEach(row =>
+      row.addEventListener('click', () => {
+        const artist = state.artists.find(a => a.slug === row.dataset.slug) || { name: row.dataset.slug, slug: row.dataset.slug };
+        state.artist = artist;
+        viewShow(artist, row.dataset.date);
+      }));
+  } catch { $('welcomeOtd').innerHTML = `<div style="font-size:12px;color:var(--text3)">Could not load shows.</div>`; }
+}
+
+/* ── Global search ───────────────────────────────── */
+// Wire search UI controls at module init
+searchToggleEl.addEventListener('click', () => {
+  const open = searchInlineEl.style.display === 'none';
+  searchInlineEl.style.display = open ? 'flex' : 'none';
+  searchToggleEl.classList.toggle('active', open);
+  if (open) $('searchInput').focus();
+});
+$('searchClose').addEventListener('click', () => {
+  searchInlineEl.style.display = 'none';
+  searchToggleEl.classList.remove('active');
+  $('searchInput').value = '';
+});
+let searchDebounce = null;
+$('searchInput').addEventListener('input', e => {
+  clearTimeout(searchDebounce);
+  const q = e.target.value.trim();
+  if (q.length < 3) return;
+  searchDebounce = setTimeout(() => runSearch(q), 350);
+});
+
+export async function runSearch(q, yearFrom, yearTo) {
+  nav.record(runSearch, [q, yearFrom, yearTo]);
+  showLoading();
+  setBreadcrumb([{ label: `Search: "${q}"` }]);
+  try {
+    const songSearchPromise = state.artist?.slug
+      ? api.songs(state.artist.slug).catch(() => ({ songs: [] }))
+      : Promise.resolve({ songs: [] });
+
+    const [data, nugsResults, songData] = await Promise.all([
+      api.search(q),
+      searchNugsLocal(q),
+      songSearchPromise,
+    ]);
+
+    let artists = data.artists ?? [];
+    let shows   = data.shows   ?? [];
+    const venues  = data.venues  ?? [];
+
+    if (yearFrom || yearTo) {
+      const from = parseInt(yearFrom) || 0;
+      const to   = parseInt(yearTo)   || 9999;
+      const inRange = d => { const y = parseInt((d ?? '').slice(0, 4)); return y >= from && y <= to; };
+      shows = shows.filter(s => inRange(s.display_date));
+    }
+
+    const lq = q.toLowerCase();
+    const songMatches = (songData?.songs ?? [])
+      .filter(s => (s.name ?? s.title ?? '').toLowerCase().includes(lq))
+      .slice(0, 12);
+
+    const total = artists.length + shows.length + venues.length + nugsResults.length + songMatches.length;
+
+    if (!total) {
+      $('contentInner').innerHTML = `<div class="error-state"><p>No results for "${esc(q)}"</p></div>`;
+      return;
+    }
+
+    const renderArtistRow = a => {
+      const color = artistColor(a.name);
+      const init  = esc((a.name[0] ?? '?').toUpperCase());
+      const imgSt = a.image_url ? `background-image:url('${esc(a.image_url)}')` : `background:${color}`;
+      return `<div class="sr-row" data-type="artist" data-slug="${esc(a.slug)}">
+        <div class="sr-avatar" style="${imgSt}" data-name="${esc(a.name)}">${a.image_url ? '' : `<span>${init}</span>`}</div>
+        <div class="sr-info"><div class="sr-title">${esc(a.name)}</div>
+          <div class="sr-sub">${a.show_count ? `${a.show_count} shows` : ''}</div></div>
+      </div>`;
+    };
+
+    const renderShowRow = (s, source) => {
+      const aName  = s.artist_name ?? s.artist_slug ?? '';
+      const artist = state.artists.find(a => a.slug === s.artist_slug) ?? { name: aName, slug: s.artist_slug ?? '', image_url: null };
+      const color  = artistColor(artist.name);
+      const imgSt  = artist.image_url ? `background-image:url('${esc(artist.image_url)}')` : `background:${color}`;
+      const srcTag = source === 'nugs' ? '<span class="badge" style="background:var(--accent)">nugs</span>' : '';
+      return `<div class="sr-row" data-type="show" data-slug="${esc(s.artist_slug ?? '')}" data-date="${esc(s.display_date ?? '')}">
+        <div class="sr-avatar" style="${imgSt}" data-name="${esc(artist.name)}">${artist.image_url ? '' : `<span>${esc((artist.name[0]??'?').toUpperCase())}</span>`}</div>
+        <div class="sr-info">
+          <div class="sr-title">${esc(s.display_date ?? '')}</div>
+          <div class="sr-sub">${esc(artist.name)} · ${esc(s.venue?.name ?? s.venueName ?? '')}</div>
+        </div>
+        <div class="sr-badges">
+          ${srcTag}
+          ${s.has_soundboard_source ? '<span class="badge badge-sbd">SBD</span>' : ''}
+          ${s.avg_rating ? `<span class="sr-rating">${stars(s.avg_rating)}</span>` : ''}
+        </div>
+      </div>`;
+    };
+
+    const renderSongRow = s => {
+      const name   = s.name ?? s.title ?? '';
+      const count  = s.show_count ?? '';
+      const artist = state.artist;
+      const imgSt  = `background:${artistColor(artist?.name ?? '')}`;
+      return `<div class="sr-row" data-type="song" data-song="${esc(name)}">
+        <div class="sr-avatar" style="${imgSt}" data-name="${esc(artist?.name ?? '')}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </div>
+        <div class="sr-info">
+          <div class="sr-title">${esc(name)}</div>
+          <div class="sr-sub">${esc(artist?.name ?? '')}${count ? ` · played ${count}×` : ''}</div>
+        </div>
+      </div>`;
+    };
+
+    const yearFilterHtml = `
+      <div class="sr-year-filter">
+        <span class="sr-year-label">Year range:</span>
+        <input class="sr-year-input" id="srYearFrom" type="number" placeholder="From" min="1960" max="2030" value="${esc(yearFrom ?? '')}">
+        <span style="color:var(--text3)">–</span>
+        <input class="sr-year-input" id="srYearTo"   type="number" placeholder="To"   min="1960" max="2030" value="${esc(yearTo ?? '')}">
+        <button class="sr-year-apply" id="srYearApply">Apply</button>
+        ${(yearFrom || yearTo) ? `<button class="sr-year-clear" id="srYearClear">Clear</button>` : ''}
+      </div>`;
+
+    safeInnerHTML($('contentInner'), `
+      <div class="sr-header">
+        <div class="sr-query">"${esc(q)}"</div>
+        <div class="sr-count">${total} result${total !== 1 ? 's' : ''}</div>
+      </div>
+      ${yearFilterHtml}
+      ${artists.length ? `<div class="sr-section"><div class="sr-section-title">Artists</div>${artists.slice(0,8).map(renderArtistRow).join('')}</div>` : ''}
+      ${(shows.length || nugsResults.length) ? `
+        <div class="sr-section">
+          <div class="sr-section-title">Shows</div>
+          ${shows.slice(0,15).map(s => renderShowRow(s, 'relisten')).join('')}
+          ${nugsResults.slice(0,8).map(s => renderShowRow(s, 'nugs')).join('')}
+        </div>` : ''}
+      ${venues.length ? `
+        <div class="sr-section">
+          <div class="sr-section-title">Venues</div>
+          ${venues.slice(0,8).map(v => `
+            <div class="sr-row" data-type="venue-label">
+              <div class="sr-venue-dot"></div>
+              <div class="sr-info"><div class="sr-title">${esc(v.name)}</div><div class="sr-sub">${esc(v.location ?? '')}</div></div>
+            </div>`).join('')}
+        </div>` : ''}
+      ${songMatches.length ? `
+        <div class="sr-section">
+          <div class="sr-section-title">Songs — ${esc(state.artist?.name ?? '')}</div>
+          ${songMatches.map(renderSongRow).join('')}
+        </div>` : ''}`);
+
+    fadeIn();
+
+    $('srYearApply')?.addEventListener('click', () => {
+      runSearch(q, $('srYearFrom')?.value || '', $('srYearTo')?.value || '');
+    });
+    $('srYearClear')?.addEventListener('click', () => runSearch(q));
+    ['srYearFrom','srYearTo'].forEach(id => {
+      $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') $('srYearApply')?.click(); });
+    });
+
+    $('contentInner').querySelectorAll('.sr-row').forEach(row => {
+      row.addEventListener('click', () => {
+        if (row.dataset.type === 'artist') {
+          const artist = state.artists.find(a => a.slug === row.dataset.slug);
+          if (artist) { state.artist = artist; viewYears(artist); }
+        } else if (row.dataset.type === 'show') {
+          const artist = state.artists.find(a => a.slug === row.dataset.slug)
+            ?? { name: row.dataset.slug, slug: row.dataset.slug };
+          state.artist = artist;
+          viewShow(artist, row.dataset.date);
+        } else if (row.dataset.type === 'song' && state.artist?.slug) {
+          viewYears(state.artist);
+          showToast(`Search shows for "${row.dataset.song}"`);
+        }
+      });
+    });
+
+    // Enrich artist avatars with Last.fm photos
+    for (const el of $('contentInner').querySelectorAll('[data-name]')) {
+      const name = el.dataset.name;
+      if (!name || el.querySelector('img') || el.querySelector('svg')) continue;
+      lastfmArtistImage(name).then(url => {
+        if (!url || el.querySelector('img')) return;
+        const img = new Image(); img.alt = name;
+        img.onload = () => { el.innerHTML = ''; el.appendChild(img); el.style.backgroundImage = ''; };
+        img.src = url;
+      });
+    }
+  } catch(e) { console.error('[views-core] runSearch', e); showError(e.message); }
+}
+
+/* ── Filter bar ──────────────────────────────────── */
+export function buildFilterBar(shows, renderFn) {
+  let filters = { sbd: false, r40: false, r45: false };
+  let sort = 'date-desc';
+
+  function apply() {
+    let list = [...shows];
+    if (filters.sbd) list = list.filter(s => s.has_soundboard_source);
+    if (filters.r45) list = list.filter(s => (s.avg_rating ?? 0) >= 4.5);
+    else if (filters.r40) list = list.filter(s => (s.avg_rating ?? 0) >= 4.0);
+    if (sort === 'date-asc')   list.sort((a,b) => (a.display_date??'') < (b.display_date??'') ? -1 : 1);
+    else if (sort === 'date-desc') list.sort((a,b) => (a.display_date??'') > (b.display_date??'') ? -1 : 1);
+    else if (sort === 'rating') list.sort((a,b) => (b.avg_rating??0) - (a.avg_rating??0));
+    renderFn(list);
+  }
+
+  const bar = document.createElement('div');
+  bar.className = 'filter-bar';
+  bar.innerHTML = `
+    <button class="filter-btn" data-f="sbd">SBD Only</button>
+    <button class="filter-btn" data-f="r40">★ 4.0+</button>
+    <button class="filter-btn" data-f="r45">★ 4.5+</button>
+    <div class="filter-sep"></div>
+    <button class="filter-btn sort-btn active" data-s="date-desc">Date ↓</button>
+    <button class="filter-btn sort-btn" data-s="date-asc">Date ↑</button>
+    <button class="filter-btn sort-btn" data-s="rating">Rating ↓</button>`;
+  bar.querySelectorAll('[data-f]').forEach(btn => btn.addEventListener('click', () => {
+    const f = btn.dataset.f;
+    if (f === 'r40') { filters.r40 = !filters.r40; if (filters.r40) filters.r45 = false; }
+    if (f === 'r45') { filters.r45 = !filters.r45; if (filters.r45) filters.r40 = false; }
+    if (f === 'sbd') filters.sbd = !filters.sbd;
+    bar.querySelector('[data-f="sbd"]').classList.toggle('active', filters.sbd);
+    bar.querySelector('[data-f="r40"]').classList.toggle('active', filters.r40);
+    bar.querySelector('[data-f="r45"]').classList.toggle('active', filters.r45);
+    apply();
+  }));
+  bar.querySelectorAll('.sort-btn').forEach(btn => btn.addEventListener('click', () => {
+    sort = btn.dataset.s;
+    bar.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    apply();
+  }));
+  return bar;
+}
+
+/* ── Years ───────────────────────────────────────── */
+export async function viewYears(artist) {
+  nav.record(viewYears, [artist]);
+  state.artist = artist; state.year = null; state.show = null;
+  showLoading();
+  setBreadcrumb([{ label: artist.name }]);
+  try {
+    const years       = await api.years(artist.slug);
+    const sorted      = [...years].sort((a, b) => b.year - a.year);
+    const totalShows  = sorted.reduce((n, y) => n + (y.show_count ?? 0), 0);
+    const heroColor   = artistColor(artist.name);
+    const artSrc      = artist.image_url ?? artist._wikiImg ?? null;
+    const artHtml     = artSrc
+      ? `<img src="${esc(artSrc)}" alt="">`
+      : `<span class="art-hero-init">${esc(artist.name[0]?.toUpperCase() ?? '?')}</span>`;
+    const artBg = artSrc ? '' : `background:${heroColor}`;
+
+    safeInnerHTML($('contentInner'), `
+      <div class="artist-hero" style="--hero-bg:${heroColor}">
+        <div class="artist-hero-art" style="${artBg}">${artHtml}</div>
+        <div class="artist-hero-info">
+          <div class="artist-hero-label">Artist</div>
+          <div class="artist-hero-name">${esc(artist.name)}</div>
+          <div class="artist-hero-meta">${sorted.length} years · ${totalShows.toLocaleString()} shows</div>
+          <div class="artist-hero-actions">
+            <button class="action-btn primary" id="btnRandom">🎲 Random Show</button>
+            <button class="action-btn" id="btnTop">⭐ Top Shows</button>
+            <button class="action-btn" id="btnTours">🗺 Tours</button>
+            <button class="action-btn" id="btnSongs">🎵 Songs</button>
+            <button class="action-btn" id="btnVenues">📍 Venues</button>
+            <button class="action-btn" id="btnEras">📅 Eras</button>
+          </div>
+        </div>
+      </div>
+      <div id="artistBioCard" class="artist-bio loading"></div>
+      <div class="artist-years-wrap">
+        <div class="artist-years-label">Browse by year</div>
+        <div class="year-grid">
+          ${sorted.map(y => `
+            <div class="year-card" data-year="${esc(y.year)}">
+              <div class="year-num">${esc(y.year)}</div>
+              <div class="year-count">${y.show_count ?? 0} shows</div>
+            </div>`).join('')}
+        </div>
+      </div>`);
+    fadeIn();
+    injectArtistBio(artist.name);
+    if (!artSrc) {
+      lastfmArtistImage(artist.name).then(imgUrl => {
+        if (!imgUrl) return;
+        artist._wikiImg = imgUrl;
+        const heroArt = $('contentInner')?.querySelector('.artist-hero-art');
+        if (heroArt) { heroArt.innerHTML = `<img src="${esc(imgUrl)}" alt="">`; heroArt.style.background = ''; }
+      });
+    }
+    $('contentInner').querySelectorAll('.year-card').forEach(c =>
+      c.addEventListener('click', () => viewShows(artist, c.dataset.year)));
+    $('btnTours').addEventListener('click',  () => viewTours(artist));
+    $('btnSongs').addEventListener('click',  () => viewSongs(artist));
+    $('btnVenues').addEventListener('click', () => viewVenues(artist));
+    $('btnEras').addEventListener('click',   () => viewDecades(artist, years));
+    $('btnRandom').addEventListener('click', async () => {
+      try { showLoading(); viewShow(artist, (await api.random(artist.slug)).display_date); }
+      catch(e) { showError(e.message); }
+    });
+    $('btnTop').addEventListener('click', async () => {
+      try { showLoading(); viewShowList(artist, await api.top(artist.slug), 'Top Shows'); }
+      catch(e) { showError(e.message); }
+    });
+  } catch(e) { console.error('[views-core] viewYears', e); showError(e.message); }
+}
+
+/* ── Decade / Era Explorer ───────────────────────── */
+export function viewDecades(artist, years) {
+  artist._years = years;
+  nav.record(viewDecades, [artist, years]);
+  setBreadcrumb([{ label: artist.name, fn: () => viewYears(artist) }, { label: 'Eras' }]);
+
+  const decades = {};
+  years.forEach(y => {
+    const d = Math.floor(y.year / 10) * 10;
+    if (!decades[d]) decades[d] = { decade: d, years: [], showCount: 0 };
+    decades[d].years.push(y);
+    decades[d].showCount += y.show_count ?? 0;
+  });
+  const sortedDecades = Object.values(decades).sort((a, b) => a.decade - b.decade);
+
+  safeInnerHTML($('contentInner'), `
+    <div class="section-header">
+      <div>
+        <div class="section-title">${esc(artist.name)} — Eras</div>
+        <div class="section-subtitle">${sortedDecades.length} decade${sortedDecades.length !== 1 ? 's' : ''} · ${years.length} years</div>
+      </div>
+    </div>
+    <div class="decade-grid">
+      ${sortedDecades.map(d => `
+        <div class="decade-card" data-decade="${d.decade}">
+          <div class="decade-name">${d.decade}s</div>
+          <div class="decade-meta">${d.years.length} year${d.years.length !== 1 ? 's' : ''} · ${d.showCount} shows</div>
+        </div>`).join('')}
+    </div>`);
+
+  $('contentInner').querySelectorAll('.decade-card').forEach(card => {
+    const dec = sortedDecades.find(d => d.decade === parseInt(card.dataset.decade));
+    if (dec) card.addEventListener('click', () => viewDecadeDetail(artist, dec));
+  });
+}
+
+export function viewDecadeDetail(artist, dec) {
+  nav.record(viewDecadeDetail, [artist, dec]);
+  setBreadcrumb([
+    { label: artist.name, fn: () => viewYears(artist) },
+    { label: 'Eras', fn: () => viewDecades(artist, artist._years ?? dec.years) },
+    { label: `${dec.decade}s` },
+  ]);
+  const sorted = [...dec.years].sort((a, b) => a.year - b.year);
+  safeInnerHTML($('contentInner'), `
+    <div class="section-header">
+      <div>
+        <div class="section-title">${esc(artist.name)} — ${dec.decade}s</div>
+        <div class="section-subtitle">${sorted.length} year${sorted.length !== 1 ? 's' : ''} · ${dec.showCount} shows</div>
+      </div>
+    </div>
+    <div class="decade-timeline-wrap">
+      <div class="decade-timeline">
+        ${sorted.map(y => `
+          <div class="decade-year-card" data-year="${esc(y.year)}">
+            <div class="decade-year-num">${esc(y.year)}</div>
+            <div class="decade-year-count">${y.show_count ?? 0} shows</div>
+          </div>`).join('')}
+      </div>
+    </div>`);
+  $('contentInner').querySelectorAll('.decade-year-card').forEach(card =>
+    card.addEventListener('click', () => viewShows(artist, card.dataset.year)));
+}
+
+/* ── Tours ───────────────────────────────────────── */
+export async function viewTours(artist) {
+  nav.record(viewTours, [artist]);
+  showLoading();
+  setBreadcrumb([
+    { label: artist.name, onClick: () => viewYears(artist) },
+    { label: 'Tours' },
+  ]);
+  try {
+    const allShows = await getAllShows(artist);
+    const tourMap  = {};
+    for (const show of allShows) {
+      if (!show.tour?.slug) continue;
+      const slug = show.tour.slug;
+      if (!tourMap[slug]) tourMap[slug] = { ...show.tour, shows: [] };
+      tourMap[slug].shows.push(show);
+    }
+    const tours = Object.values(tourMap)
+      .filter(t => t.shows.length)
+      .sort((a, b) => (a.shows[0]?.display_date ?? '') < (b.shows[0]?.display_date ?? '') ? -1 : 1);
+
+    if (!tours.length) {
+      safeInnerHTML($('contentInner'), `
+        <div class="section-header">
+          <div><div class="section-title">Tours — ${esc(artist.name)}</div></div>
+        </div>
+        <div class="error-state" style="margin-top:20px"><p>No tour data available for this artist.</p></div>`);
+      return;
+    }
+
+    safeInnerHTML($('contentInner'), `
+      <div class="section-header">
+        <div>
+          <div class="section-title">Tours — ${esc(artist.name)}</div>
+          <div class="section-subtitle">${tours.length} tour${tours.length !== 1 ? 's' : ''}</div>
+        </div>
+      </div>
+      <div class="tour-list">
+        ${tours.map(tour => {
+          const dates     = tour.shows.map(s => s.display_date).sort();
+          const start     = dates[0]?.slice(0,4) ?? '';
+          const end       = dates[dates.length-1]?.slice(0,4) ?? '';
+          const dateRange = start === end ? start : `${start}–${end}`;
+          return `<div class="tour-row" data-tslug="${esc(tour.slug)}">
+            <div class="tour-name">${esc(tour.name || tour.slug)}</div>
+            <div class="tour-dates">${esc(dateRange)}</div>
+            <div class="tour-count">${tour.shows.length} show${tour.shows.length !== 1 ? 's' : ''}</div>
+          </div>`;
+        }).join('')}
+      </div>`);
+    $('contentInner').querySelectorAll('.tour-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const tour = tours.find(t => t.slug === row.dataset.tslug);
+        if (tour) viewTourShows(artist, tour);
+      });
+    });
+  } catch(e) { console.error('[views-core] viewTours', e); showError(e.message); }
+}
+
+export function viewTourShows(artist, tour) {
+  nav.record(viewTourShows, [artist, tour]);
+  setBreadcrumb([
+    { label: artist.name, onClick: () => viewYears(artist) },
+    { label: 'Tours',     onClick: () => viewTours(artist) },
+    { label: tour.name || tour.slug },
+  ]);
+  renderShowList(tour.shows ?? [], artist, tour.name || tour.slug);
+}
+
+/* ── All-shows cache + Venues + Songs ───────────── */
+const allShowsCache  = {};
+const songShowsCache = {};
+let   scanCancelled  = false;
+
+export async function getAllShows(artist) {
+  if (allShowsCache[artist.slug]) return allShowsCache[artist.slug];
+  const years   = await api.years(artist.slug);
+  const results = await Promise.all(
+    years.map(y => api.shows(artist.slug, y.year).then(d => d.shows ?? d).catch(() => []))
+  );
+  allShowsCache[artist.slug] = results.flat();
+  return allShowsCache[artist.slug];
+}
+
+export async function viewVenues(artist) {
+  nav.record(viewVenues, [artist]);
+  showLoading();
+  setBreadcrumb([
+    { label: artist.name, onClick: () => viewYears(artist) },
+    { label: 'Venues' },
+  ]);
+  try {
+    const allShows = await getAllShows(artist);
+    const venueMap = new Map();
+    for (const show of allShows) {
+      if (!show.venue?.name) continue;
+      const key = show.venue.name;
+      if (!venueMap.has(key)) venueMap.set(key, { name: show.venue.name, location: show.venue.location ?? '', count: 0 });
+      venueMap.get(key).count++;
+    }
+    const venues = [...venueMap.values()].sort((a, b) => b.count - a.count);
+
+    safeInnerHTML($('contentInner'), `
+      <div class="section-header">
+        <div>
+          <div class="section-title">Venues — ${esc(artist.name)}</div>
+          <div class="section-subtitle">${venues.length} venue${venues.length !== 1 ? 's' : ''}</div>
+        </div>
+      </div>
+      <input class="song-filter" id="venueFilter" type="text" placeholder="Filter venues…" autocomplete="off" spellcheck="false">
+      <div class="venue-list" id="venueListEl"></div>`);
+
+    function renderVenueRows(list) {
+      safeInnerHTML($('venueListEl'), list.map(v => `
+        <div class="venue-row" data-name="${esc(v.name)}">
+          <div class="venue-info">
+            <div class="venue-name">${esc(v.name)}</div>
+            ${v.location ? `<div class="venue-loc">${esc(v.location)}</div>` : ''}
+          </div>
+          <div class="venue-count">${v.count} show${v.count !== 1 ? 's' : ''}</div>
+        </div>`).join(''));
+      $('venueListEl').querySelectorAll('.venue-row').forEach(row =>
+        row.addEventListener('click', () => {
+          const vname = row.dataset.name;
+          const venueShows = allShows.filter(s => s.venue?.name === vname);
+          viewShowList(artist, venueShows, `📍 ${vname}`);
+        }));
+    }
+
+    renderVenueRows(venues);
+    $('venueFilter').addEventListener('input', e => {
+      const q = e.target.value.toLowerCase().trim();
+      renderVenueRows(q ? venues.filter(v =>
+        v.name.toLowerCase().includes(q) || v.location.toLowerCase().includes(q)
+      ) : venues);
+    });
+    fadeIn();
+  } catch(e) { console.error('[views-core] viewVenues', e); showError(e.message); }
+}
+
+export async function viewSongs(artist) {
+  nav.record(viewSongs, [artist]);
+  showLoading();
+  setBreadcrumb([
+    { label: artist.name, onClick: () => viewYears(artist) },
+    { label: 'Songs' },
+  ]);
+  try {
+    const songs     = await api.songs(artist.slug);
+    const byPopular = [...songs].sort((a, b) => (b.shows_played_at ?? 0) - (a.shows_played_at ?? 0));
+    const byRare    = [...songs].sort((a, b) => (a.shows_played_at ?? 0) - (b.shows_played_at ?? 0));
+    let   activeSort = 'popular';
+
+    function rarityLabel(n) {
+      if (n === 1)  return `<span class="rarity-badge rarity-once">Once</span>`;
+      if (n <= 5)   return `<span class="rarity-badge rarity-rare">Rare</span>`;
+      if (n <= 15)  return `<span class="rarity-badge rarity-uncommon">Uncommon</span>`;
+      return '';
+    }
+
+    safeInnerHTML($('contentInner'), `
+      <div class="section-header">
+        <div>
+          <div class="section-title">Songs — ${esc(artist.name)}</div>
+          <div class="section-subtitle">${songs.length} unique songs</div>
+        </div>
+        <div class="song-sort-tabs">
+          <button class="song-sort-tab active" data-sort="popular">Most Played</button>
+          <button class="song-sort-tab" data-sort="rare">🦄 Rarities</button>
+        </div>
+      </div>
+      <input class="song-filter" id="songFilter" type="text" placeholder="Filter songs…" autocomplete="off" spellcheck="false">
+      <div class="song-list" id="songListEl"></div>`);
+
+    function renderSongRows(list) {
+      safeInnerHTML($('songListEl'), list.map(s => `
+        <div class="song-row" data-name="${esc(s.name)}">
+          <div class="song-name">${esc(s.name)}${activeSort === 'rare' ? rarityLabel(s.shows_played_at ?? 0) : ''}</div>
+          <div class="song-count">${s.shows_played_at ?? '?'} shows</div>
+        </div>`).join(''));
+      $('songListEl').querySelectorAll('.song-row').forEach(row =>
+        row.addEventListener('click', () => viewSongShows(artist, row.dataset.name)));
+    }
+
+    function currentList(q) {
+      const base = activeSort === 'rare' ? byRare : byPopular;
+      return q ? base.filter(s => s.name.toLowerCase().includes(q)) : base;
+    }
+
+    renderSongRows(currentList(''));
+
+    $('songFilter').addEventListener('input', e => {
+      renderSongRows(currentList(e.target.value.toLowerCase().trim()));
+    });
+
+    $('contentInner').querySelectorAll('.song-sort-tab').forEach(tab =>
+      tab.addEventListener('click', () => {
+        activeSort = tab.dataset.sort;
+        $('contentInner').querySelectorAll('.song-sort-tab').forEach(t => t.classList.toggle('active', t === tab));
+        renderSongRows(currentList($('songFilter').value.toLowerCase().trim()));
+      }));
+  } catch(e) { console.error('[views-core] viewSongs', e); showError(e.message); }
+}
+
+export async function viewSongShows(artist, songName) {
+  nav.record(viewSongShows, [artist, songName]);
+  const cacheKey = `${artist.slug}::${songName.toLowerCase()}`;
+  setBreadcrumb([
+    { label: artist.name, onClick: () => viewYears(artist) },
+    { label: 'Songs',     onClick: () => viewSongs(artist) },
+    { label: songName },
+  ]);
+
+  if (songShowsCache[cacheKey]) {
+    renderShowList(songShowsCache[cacheKey], artist, `"${songName}"`);
+    return;
+  }
+
+  scanCancelled = false;
+
+  safeInnerHTML($('contentInner'), `
+    <div class="section-header" style="align-items:center">
+      <div>
+        <div class="section-title">"${esc(songName)}"</div>
+        <div class="section-subtitle" id="scanStatus">Fetching show list…</div>
+      </div>
+      <button class="action-btn" id="btnCancelScan">Cancel</button>
+    </div>
+    <div class="scan-bar"><div class="scan-bar-fill" id="scanFill"></div></div>
+    <div class="show-list" id="songShowsEl"></div>`);
+
+  $('btnCancelScan').addEventListener('click', () => {
+    scanCancelled = true;
+    if ($('scanStatus'))    $('scanStatus').textContent = 'Cancelled.';
+    if ($('btnCancelScan')) $('btnCancelScan').remove();
+    if ($('scanFill'))      $('scanFill').style.width = '100%';
+  });
+
+  try {
+    const allShows = await getAllShows(artist);
+    if (scanCancelled) return;
+
+    const total = allShows.length;
+    let scanned = 0;
+    const found = [];
+    const lower = songName.toLowerCase();
+
+    const updateStatus = () => {
+      if ($('scanStatus')) $('scanStatus').textContent =
+        `Scanning ${scanned} / ${total} shows · ${found.length} found`;
+      if ($('scanFill')) $('scanFill').style.width = `${Math.round((scanned / total) * 100)}%`;
+    };
+
+    const batchSize = 20;
+    for (let i = 0; i < allShows.length; i += batchSize) {
+      if (scanCancelled) break;
+      await Promise.all(allShows.slice(i, i + batchSize).map(async show => {
+        if (scanCancelled) return;
+        try {
+          const full   = await api.show(artist.slug, show.display_date);
+          const tracks = (full.sources ?? []).flatMap(src => flatTracks(src));
+          const match  = tracks.some(t => t.title?.toLowerCase().includes(lower));
+          if (match) {
+            found.push(show);
+            const el = document.createElement('div');
+            el.className = 'show-row';
+            el.dataset.date = show.display_date;
+            // safeInnerHTML used here as defence-in-depth; esc() is primary protection
+            safeInnerHTML(el, `
+              <div class="show-date">${esc(show.display_date)}</div>
+              <div class="show-venue">
+                ${show.venue?.name
+                  ? `<span class="venue-link" data-venue="${esc(show.venue.name)}">${esc(show.venue.name)}</span>${show.venue?.location ? ' — ' + esc(show.venue.location) : ''}`
+                  : ''}
+              </div>
+              <div class="show-badges">
+                ${show.has_soundboard_source ? '<span class="badge badge-sbd">SBD</span>' : ''}
+                ${show.avg_rating ? `<span class="star">${stars(show.avg_rating)}</span>` : ''}
+              </div>`);
+            el.addEventListener('click', () => viewShow(artist, show.display_date));
+            el.querySelectorAll('.venue-link').forEach(link =>
+              link.addEventListener('click', async e => {
+                e.stopPropagation();
+                const vname      = link.dataset.venue;
+                const venueShows = (allShowsCache[artist.slug] ?? []).filter(s => s.venue?.name === vname);
+                if (venueShows.length) viewShowList(artist, venueShows, `📍 ${vname}`);
+              }));
+            $('songShowsEl')?.appendChild(el);
+          }
+        } catch (err) { console.error('[views-core] song scan track', err); }
+        scanned++;
+      }));
+      updateStatus();
+    }
+
+    if ($('scanFill'))      $('scanFill').style.width = '100%';
+    if ($('btnCancelScan')) $('btnCancelScan').remove();
+    if ($('scanStatus')) {
+      $('scanStatus').textContent = scanCancelled
+        ? `Cancelled · ${found.length} shows found`
+        : `${found.length} show${found.length !== 1 ? 's' : ''} · Complete`;
+    }
+    if (!found.length && !scanCancelled && $('songShowsEl')) {
+      $('songShowsEl').innerHTML = `<div class="error-state"><p>No shows found for "${esc(songName)}"</p></div>`;
+    }
+    if (!scanCancelled) songShowsCache[cacheKey] = found;
+
+  } catch(e) { console.error('[views-core] viewSongShows', e); showError(e.message); }
+}
+
+/* ── Shows list views ────────────────────────────── */
+export async function viewShows(artist, year) {
+  nav.record(viewShows, [artist, year]);
+  state.year = year; state.show = null;
+  showLoading();
+  setBreadcrumb([
+    { label: artist.name, onClick: () => viewYears(artist) },
+    { label: year },
+  ]);
+  try {
+    const data  = await api.shows(artist.slug, year);
+    const shows = data.shows ?? data;
+    renderShowList(shows, artist, year);
+  } catch(e) { console.error('[views-core] viewShows', e); showError(e.message); }
+}
+
+export function viewShowList(artist, shows, title) {
+  nav.record(viewShowList, [artist, shows, title]);
+  setBreadcrumb([
+    { label: artist.name, onClick: () => viewYears(artist) },
+    { label: title },
+  ]);
+  renderShowList(shows, artist, title);
+}
+
+export function renderShowList(shows, artist, context) {
+  safeInnerHTML($('contentInner'), `
+    <div class="section-header">
+      <div>
+        <div class="section-title">${esc(String(context ?? ''))}</div>
+        <div class="section-subtitle" id="showCount">${shows.length} show${shows.length!==1?'s':''}</div>
+      </div>
+    </div>
+    <div id="filterBarSlot"></div>
+    <div class="show-cards" id="showListEl"></div>`);
+  fadeIn();
+
+  const effectiveArtist = artist ?? state.artist;
+
+  function renderRows(list) {
+    safeInnerHTML($('showListEl'), list.map(s => {
+      const fav      = effectiveArtist ? store.isFav(effectiveArtist.slug, s.display_date) : false;
+      const myRating = effectiveArtist ? store.getRating(effectiveArtist.slug, s.display_date) : null;
+      const attended = effectiveArtist ? store.isAttended(effectiveArtist.slug, s.display_date) : false;
+      const artBg    = effectiveArtist?.image_url ? '' : `background:${artistColor(effectiveArtist?.name ?? '')}`;
+      const artContent = effectiveArtist?.image_url
+        ? `<img src="${esc(effectiveArtist.image_url)}" alt="" loading="lazy">`
+        : (() => {
+            const parts = s.display_date?.split('-') ?? [];
+            const mn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const month = parts[1] ? (mn[parseInt(parts[1],10)-1] ?? '') : '';
+            const day   = parts[2] ? String(parseInt(parts[2],10)) : '';
+            const year  = parts[0] ?? '';
+            return `<div class="typo-artist">${esc(effectiveArtist?.name ?? '')}</div>
+                    <div class="typo-month">${esc(month)}</div>
+                    <div class="typo-day">${esc(day)}</div>
+                    <div class="typo-year">${esc(year)}</div>`;
+          })();
+      return `
+        <div class="show-card" data-date="${esc(s.display_date)}">
+          <div class="show-card-art${effectiveArtist?.image_url ? '' : ' typo'}" style="${artBg}">
+            ${artContent}
+            <div class="card-play">&#9654;</div>
+          </div>
+          <div class="show-card-body">
+            <div class="show-card-date">${esc(s.display_date)}</div>
+            <div class="show-card-venue">${esc(s.venue?.name ?? '')}</div>
+            <div class="show-card-badges">
+              ${s.has_soundboard_source ? '<span class="badge badge-sbd">SBD</span>' : ''}
+              ${s.avg_rating ? `<span class="star">${stars(s.avg_rating)}</span>` : ''}
+              ${myRating ? `<span class="badge badge-mine">★${myRating}</span>` : ''}
+              ${attended ? '<span class="badge badge-attended">📍</span>' : ''}
+              ${(s.source_count ?? 1) > 1 ? `<span class="badge badge-src">${s.source_count} src</span>` : ''}
+              <button class="show-heart ${fav ? 'favorited' : ''}" data-date="${esc(s.display_date)}" title="${fav ? 'Unsave' : 'Save'}">♥</button>
+            </div>
+          </div>
+        </div>`;
+    }).join(''));
+    $('showCount').textContent = `${list.length} show${list.length!==1?'s':''}`;
+
+    $('showListEl').querySelectorAll('.show-card').forEach(card =>
+      card.addEventListener('click', e => {
+        if (e.target.classList.contains('show-heart')) return;
+        viewShow(effectiveArtist, card.dataset.date);
+      }));
+
+    $('showListEl').querySelectorAll('.show-heart').forEach(btn =>
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (!effectiveArtist) return;
+        const show = shows.find(s => s.display_date === btn.dataset.date);
+        if (!show) return;
+        const nowFav = store.toggleFav(show, effectiveArtist);
+        btn.classList.toggle('favorited', nowFav);
+        btn.title = nowFav ? 'Unsave' : 'Save';
+      }));
+
+    if (effectiveArtist) {
+      $('showListEl').querySelectorAll('.venue-link').forEach(link =>
+        link.addEventListener('click', async e => {
+          e.stopPropagation();
+          const vname = link.dataset.venue;
+          showLoading();
+          setBreadcrumb([
+            { label: effectiveArtist.name, onClick: () => viewYears(effectiveArtist) },
+            { label: `📍 ${vname}` },
+          ]);
+          try {
+            const all        = await getAllShows(effectiveArtist);
+            const venueShows = all.filter(s => s.venue?.name === vname);
+            if (venueShows.length) {
+              viewShowList(effectiveArtist, venueShows, `📍 ${vname}`);
+            } else {
+              showError(`No shows found at ${vname}`);
+            }
+          } catch(e2) { console.error('[views-core] venue link', e2); showError(e2.message); }
+        }));
+    }
+  }
+
+  const bar = buildFilterBar(shows, renderRows);
+  $('filterBarSlot').appendChild(bar);
+  renderRows(shows);
+}
+
+/* ── Show detail ─────────────────────────────────── */
+export async function viewShow(artist, date) {
+  nav.record(viewShow, [artist, date]);
+  showLoading();
+  try {
+    const show = await api.show(artist.slug, date);
+    state.show = show;
+    const year = (show.display_date || date).slice(0, 4);
+    setBreadcrumb([
+      { label: artist.name, onClick: () => viewYears(artist) },
+      { label: year,        onClick: () => viewShows(artist, year) },
+      { label: show.display_date || date },
+    ]);
+    renderShow(show, artist);
+  } catch(e) { console.error('[views-core] viewShow', e); showError(e.message); }
+}
+
+export function renderShow(show, artist) {
+  const sources   = show.sources ?? [];
+  const fav       = store.isFav(artist.slug, show.display_date);
+  const shareUrl  = `https://relisten.net/${artist.slug}/${show.display_date}`;
+  const heroColor = artistColor(artist.name);
+  const artHtml   = artist.image_url
+    ? `<img src="${esc(artist.image_url)}" alt="${esc(artist.name)}">`
+    : `<span class="art-init">${esc(artist.name[0]?.toUpperCase() ?? '?')}</span>`;
+
+  safeInnerHTML($('contentInner'), `
+    <div class="show-header" style="--hero-bg:${heroColor}">
+      <div class="show-header-wrap">
+        <div class="show-art" id="relistenShowArt" style="${artist.image_url ? '' : `background:${heroColor}`}">${artHtml}</div>
+        <div class="show-header-info">
+          <h1>${esc(show.display_date)}</h1>
+          <div class="show-venue-full">
+            ${esc(show.venue?.name??'')}${show.venue?.location?' — '+esc(show.venue.location):''}
+          </div>
+          <div class="show-tags">
+            ${show.has_soundboard_source      ?'<span class="tag tag-green">Soundboard</span>':''}
+            ${show.has_streamable_flac_source ?'<span class="tag">FLAC</span>':''}
+            ${show.avg_rating                 ?`<span class="tag tag-gold">${stars(show.avg_rating)}</span>`:''}
+            ${show.tour_name                  ?`<span class="tag">${esc(show.tour_name)}</span>`:''}
+            <span class="tag">${sources.length} recording${sources.length!==1?'s':''}</span>
+          </div>
+          <div class="show-personal-row">
+            <div class="show-rating-stars" id="showRatingStars">
+              ${[1,2,3,4,5].map(n=>`<button class="pr-star${n<=(store.getRating(artist.slug,show.display_date)??0)?' filled':''}" data-r="${n}">★</button>`).join('')}
+              <span class="pr-label">${store.getRating(artist.slug,show.display_date)?'Your rating':'Rate this show'}</span>
+            </div>
+            <button class="action-btn attended-btn${store.isAttended(artist.slug,show.display_date)?' active':''}" id="btnAttended">
+              📍 I Was There
+            </button>
+          </div>
+          <div class="show-actions">
+            <button class="action-btn primary" id="btnPlayAll">▶ Play Best Recording</button>
+            <button class="action-btn show-heart-btn ${fav?'active':''}" id="btnFav">${fav?'♥ Saved':'♡ Save'}</button>
+            <button class="action-btn" id="btnShare" title="Copy Relisten link">🔗 Share</button>
+            <button class="action-btn" id="btnCompanion" title="Recording info &amp; notes">ℹ Info</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="sourceArea"></div>`);
+  fadeIn();
+
+  // Enrich with Last.fm artist image if Relisten doesn't have one
+  if (!artist.image_url) {
+    lastfmArtistImage(artist.name).then(imgUrl => {
+      if (!imgUrl) return;
+      artist._wikiImg = imgUrl;
+      const artEl = $('relistenShowArt');
+      if (artEl) {
+        const img = new Image();
+        img.alt = artist.name;
+        img.onload = () => { artEl.innerHTML = ''; artEl.appendChild(img); artEl.style.background = ''; };
+        img.src = imgUrl;
+      }
+      if (state.artist?.slug === artist.slug) setPlayerArt(artist, imgUrl, state.show);
+    });
+  }
+
+  $('btnFav').addEventListener('click', () => {
+    const nowFav = store.toggleFav(show, artist);
+    $('btnFav').classList.toggle('active', nowFav);
+    $('btnFav').textContent = nowFav ? '♥ Saved' : '♡ Save';
+  });
+
+  $('btnShare').addEventListener('click', () => {
+    navigator.clipboard.writeText(shareUrl).then(() => showToast('Relisten link copied!'));
+  });
+
+  $('btnCompanion').addEventListener('click', () => {
+    const panel = $('companionPanel');
+    if (panel.classList.contains('open')) { closeCompanion(); return; }
+    openCompanion(state.source ?? sources[0], { ...show, artist_slug: artist.slug });
+  });
+
+  // Personal rating stars
+  function refreshStars() {
+    const r = store.getRating(artist.slug, show.display_date) ?? 0;
+    $('showRatingStars').querySelectorAll('.pr-star').forEach(s => s.classList.toggle('filled', +s.dataset.r <= r));
+    $('showRatingStars').querySelector('.pr-label').textContent = r ? 'Your rating' : 'Rate this show';
+  }
+  $('showRatingStars').querySelectorAll('.pr-star').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const prev = store.getRating(artist.slug, show.display_date);
+      const val  = +btn.dataset.r;
+      store.setRating(artist.slug, show.display_date, prev === val ? null : val);
+      refreshStars();
+    }));
+
+  $('btnAttended').addEventListener('click', () => {
+    const now = store.toggleAttended(artist, show);
+    $('btnAttended').classList.toggle('active', now);
+    showToast(now ? '📍 Marked as attended!' : 'Attendance removed');
+  });
+
+  function renderSourceArea(idx) {
+    const src = sources[idx]; if (!src) return;
+    state.source = src;
+    const tracks = flatTracks(src);
+
+    safeInnerHTML($('sourceArea'), `
+      <div class="source-tabs">
+        ${sources.map((s,i)=>`
+          <div class="source-tab ${i===idx?'active':''}" data-sidx="${i}">
+            ${s.is_soundboard?'🎤 Soundboard':`🎧 Audience ${i+1}`}
+            ${s.avg_rating?` · ★${s.avg_rating.toFixed(1)}`:''}
+          </div>`).join('')}
+      </div>
+      ${(src.taper_notes||src.description||src.taper||src.lineage)?`
+        <div class="source-meta">
+          ${src.taper       ?`<strong>Taper:</strong> ${esc(src.taper)}<br>`:''}
+          ${src.lineage     ?`<strong>Lineage:</strong> ${esc(src.lineage)}<br>`:''}
+          ${src.taper_notes ?`<strong>Notes:</strong> ${esc(src.taper_notes)}<br>`:''}
+          ${src.description ?`<strong>Info:</strong> ${esc(src.description)}`:''}
+        </div>`:''}
+      <div id="trackList">
+        ${(src.sets??[]).map((set,si)=>`
+          ${set.name?`<div class="set-label">${esc(set.name)}</div>`
+            :(src.sets?.length??0)>1?`<div class="set-label">Set ${si+1}</div>`:''}
+          ${(set.tracks??[]).filter(t=>t.mp3_url).map((t,ti)=>`
+            <div class="track-row" data-track-uuid="${esc(t.uuid)}" data-track-pos="${ti+1}">
+              <div class="track-num">${ti+1}</div>
+              <div class="track-name">${esc(t.title||'Unknown')}</div>
+              <div class="track-dur">${fmt(t.duration)}</div>
+              <button class="track-stats-btn" data-title="${esc(t.title||'')}" title="Show occurrences">📊</button>
+              <button class="track-add-tape" data-track-uuid="${esc(t.uuid)}" title="Add to tape">📼</button>
+            </div>`).join('')}
+        `).join('')}
+      </div>`);
+
+    if (state.queue[state.queueIdx]) {
+      const el = document.querySelector(`[data-track-uuid="${state.queue[state.queueIdx].uuid}"]`);
+      if (el) { el.classList.add('playing'); el.querySelector('.track-num').textContent = '▶'; }
+    }
+
+    $('sourceArea').querySelectorAll('.source-tab').forEach(tab =>
+      tab.addEventListener('click', () => {
+        closeCompanion();
+        renderSourceArea(parseInt(tab.dataset.sidx));
+      }));
+
+    $('sourceArea').querySelectorAll('.track-row').forEach(row =>
+      row.addEventListener('click', e => {
+        if (e.target.classList.contains('track-add-tape')) return;
+        const track = tracks.find(t => t.uuid === row.dataset.trackUuid);
+        if (track) player.playTrack(track, src);
+      }));
+
+    $('sourceArea').querySelectorAll('.track-add-tape').forEach(btn =>
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const track = tracks.find(t => t.uuid === btn.dataset.trackUuid);
+        if (track) showTapePickerForTrack(track);
+      }));
+
+    $('sourceArea').querySelectorAll('.track-stats-btn').forEach(btn =>
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const title = btn.dataset.title;
+        if (title) viewSongShows(artist, title);
+      }));
+  }
+
+  renderSourceArea(0);
+  $('btnPlayAll').addEventListener('click', () => {
+    const best = sources.find(s => s.is_soundboard) ?? sources[0];
+    if (best) player.playSource(best);
+  });
+
+  // Per-show notes — saved to localStorage, esc() used to set textarea value safely
+  const noteKey   = `db-note-${artist.slug}-${show.display_date}`;
+  const savedNote = localStorage.getItem(noteKey) ?? '';
+  const notesSection = document.createElement('div');
+  notesSection.className = 'show-notes-section';
+  notesSection.innerHTML = `
+    <div class="show-notes-label">My Notes</div>
+    <textarea class="show-notes-ta" id="showNotesTa" placeholder="Add your notes about this show…"></textarea>
+    <div class="show-notes-hint">Auto-saved to this device · included in data export</div>`;
+  // Set textarea value via property (not innerHTML) to avoid any injection risk
+  notesSection.querySelector('#showNotesTa').value = savedNote;
+  $('contentInner').appendChild(notesSection);
+
+  let notesDebounce = null;
+  $('showNotesTa').addEventListener('input', e => {
+    clearTimeout(notesDebounce);
+    notesDebounce = setTimeout(() => localStorage.setItem(noteKey, e.target.value), 600);
+  });
+  $('showNotesTa').addEventListener('click', e => e.stopPropagation());
+
+  // Similar Shows — loaded async
+  const similarSection = document.createElement('div');
+  similarSection.id = 'similarShows';
+  similarSection.className = 'similar-shows';
+  similarSection.innerHTML = `
+    <div class="section-header" style="margin-top:8px">
+      <div><div class="section-title" style="font-size:13px">Similar Shows</div></div>
+    </div>
+    <div id="similarShowsList"><div class="loading" style="height:50px;font-size:12px"><div class="spinner"></div></div></div>`;
+  $('contentInner').appendChild(similarSection);
+  loadSimilarShows(show, artist);
+}
+
+export async function loadSimilarShows(show, artist) {
+  const section = $('similarShows');
+  const list    = $('similarShowsList');
+  if (!section || !list) return;
+  try {
+    const allShows = await getAllShows(artist);
+    const scored = allShows
+      .filter(s => s.display_date !== show.display_date)
+      .map(s => {
+        let score = 0;
+        if (s.venue?.name && s.venue.name === show.venue?.name) score += 3;
+        if (s.tour?.slug  && show.tour?.slug && s.tour.slug === show.tour.slug) score += 3;
+        const sy = s.display_date?.slice(0,4), cy = show.display_date?.slice(0,4);
+        if (sy && cy) {
+          const diff = Math.abs(parseInt(sy) - parseInt(cy));
+          if (diff === 0) score += 2; else if (diff <= 2) score += 1;
+        }
+        if (s.avg_rating && show.avg_rating && Math.abs(s.avg_rating - show.avg_rating) <= 0.5) score += 1;
+        return { show: s, score };
+      })
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score || (b.show.avg_rating ?? 0) - (a.show.avg_rating ?? 0))
+      .slice(0, 8)
+      .map(x => x.show);
+
+    if (!scored.length) { section.style.display = 'none'; return; }
+
+    safeInnerHTML(list, scored.map(s => `
+      <div class="show-row" data-date="${esc(s.display_date)}" style="cursor:pointer">
+        <div class="show-date">${esc(s.display_date)}</div>
+        <div class="show-venue">${esc(s.venue?.name ?? '')}</div>
+        <div class="show-badges">
+          ${s.has_soundboard_source ? '<span class="badge badge-sbd">SBD</span>' : ''}
+          ${s.avg_rating ? `<span class="star">${stars(s.avg_rating)}</span>` : ''}
+        </div>
+      </div>`).join(''));
+    list.querySelectorAll('.show-row').forEach(row =>
+      row.addEventListener('click', () => viewShow(artist, row.dataset.date)));
+  } catch { section.style.display = 'none'; }
+}
+
+export function renderShowCards(shows, title) {
+  safeInnerHTML($('contentInner'), `
+    <div class="section-header">
+      <div><div class="section-title">${esc(title)}</div><div class="section-subtitle">${shows.length} shows</div></div>
+    </div>
+    <div class="show-cards" id="showCardsGrid"></div>`);
+
+  safeInnerHTML($('showCardsGrid'), shows.map(s => {
+    const artist   = state.artists.find(a => a.slug === s.artist_slug) ?? { name: s.artist_name ?? s.artist_slug ?? '', slug: s.artist_slug ?? '' };
+    const artStyle = artist.image_url
+      ? `background-image:url('${esc(artist.image_url)}');background-color:${artistColor(artist.name)}`
+      : `background-color:${artistColor(artist.name)}`;
+    const artInner = artist.image_url
+      ? `<img src="${esc(artist.image_url)}" alt="" loading="lazy">`
+      : `<span class="art-init">${esc(artist.name[0]?.toUpperCase() ?? '?')}</span>`;
+    return `
+      <div class="show-card" data-slug="${esc(s.artist_slug ?? '')}" data-date="${esc(s.display_date)}">
+        <div class="show-card-art" style="${artStyle}">${artInner}<span class="card-play">▶</span></div>
+        <div class="show-card-body">
+          <div class="show-card-artist">${esc(artist.name)}</div>
+          <div class="show-card-date">${esc(s.display_date)}</div>
+          <div class="show-card-venue">${esc(s.venue?.name ?? '')}</div>
+          <div class="show-card-badges">
+            ${s.has_soundboard_source ? '<span class="badge badge-sbd">SBD</span>' : ''}
+            ${s.avg_rating ? `<span class="star">${stars(s.avg_rating)}</span>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join(''));
+
+  $('showCardsGrid').querySelectorAll('.show-card').forEach(card =>
+    card.addEventListener('click', () => {
+      const artist = state.artists.find(a => a.slug === card.dataset.slug)
+        ?? { name: card.dataset.slug, slug: card.dataset.slug };
+      state.artist = artist;
+      viewShow(artist, card.dataset.date);
+    }));
+}
+
+export async function viewTrending() {
+  nav.record(viewTrending, []);
+  showLoading(); setBreadcrumb([{ label: 'Trending Shows' }]);
+  try {
+    const data  = await api.trending();
+    const shows = data.shows ?? data;
+    renderShowCards(shows, '🔥 Trending Shows');
+  } catch(e) { console.error('[views-core] viewTrending', e); showError(e.message); }
+}
+
+export async function viewRecent() {
+  nav.record(viewRecent, []);
+  showLoading(); setBreadcrumb([{ label: 'Recently Added' }]);
+  try {
+    const data = await api.recent();
+    renderShowList(data.shows ?? data, null, '🆕 Recently Added');
+  } catch(e) { console.error('[views-core] viewRecent', e); showError(e.message); }
+}
+
+/* ── Sidebar ─────────────────────────────────────── */
+export function renderArtists(artists) {
+  if (sidebarSource === 'nugs') {
+    if (!nugsAuth.isValid()) {
+      $('artistList').innerHTML = `<div class="sidebar-empty-nugs">Sign in to nugs.net in Settings ⚙</div>`;
+      return;
+    }
+    const q = $('artistSearch').value.toLowerCase().trim();
+    const nugsArtists = nugsArtistStore.get()
+      .filter(a => !q || a.name.toLowerCase().includes(q));
+    if (nugsArtists.length === 0) {
+      $('artistList').innerHTML = `<div class="sidebar-empty-nugs">${q ? 'No matches' : 'Add artists in Settings ⚙'}</div>`;
+    } else {
+      safeInnerHTML($('artistList'), nugsArtists.map(a => {
+        const count = nugsReleasesCache[a.id]?.length;
+        return `<div class="artist-item nugs-artist-item" data-nugs-id="${esc(a.id)}" data-nugs-slug="${esc(a.slug)}">
+          <div class="artist-avatar" style="background-color:${artistColor(a.name)}">
+            <span>${esc((a.name[0] ?? 'N').toUpperCase())}</span>
+          </div>
+          <span class="artist-name">${esc(a.name)}</span>
+          ${count != null ? `<span class="artist-count">${count}</span>` : ''}
+        </div>`;
+      }).join(''));
+    }
+    setTimeout(enrichArtistAvatars, 0);
+    $('artistList').querySelectorAll('.nugs-artist-item').forEach(item =>
+      item.addEventListener('click', () => {
+        document.querySelectorAll('.artist-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        const artist = nugsArtistStore.get().find(a => a.slug === item.dataset.nugsSlug);
+        if (artist) nugsViewArtist(artist);
+      }));
+    return;
+  }
+
+  // Relisten tab
+  const favSlugs = new Set(store.getArtistFavs());
+  const sorted   = [...artists].sort((a, b) => {
+    const af = favSlugs.has(a.slug), bf = favSlugs.has(b.slug);
+    if (af && !bf) return -1; if (bf && !af) return 1; return 0;
+  });
+
+  safeInnerHTML($('artistList'), sorted.map(a => {
+    const isFav = favSlugs.has(a.slug);
+    const avatarStyle = a.image_url
+      ? `background-image:url('${esc(a.image_url)}');background-color:${artistColor(a.name)}`
+      : `background-color:${artistColor(a.name)}`;
+    const avatarInner = a.image_url ? '' : `<span>${esc(a.name[0]?.toUpperCase() ?? '?')}</span>`;
+    return `<div class="artist-item ${isFav ? 'favorited' : ''}" data-slug="${esc(a.slug)}">
+      <div class="artist-avatar" style="${avatarStyle}">${avatarInner}</div>
+      <span class="artist-name">${esc(a.name)}</span>
+      ${a.show_count ? `<span class="artist-count">${a.show_count}</span>` : ''}
+      <button class="artist-fav-btn ${isFav ? 'active' : ''}" data-slug="${esc(a.slug)}" title="${isFav ? 'Unfavorite' : 'Favorite'}">★</button>
+    </div>`;
+  }).join(''));
+
+  setTimeout(enrichArtistAvatars, 0);
+
+  $('artistList').querySelectorAll('.artist-item').forEach(item =>
+    item.addEventListener('click', e => {
+      if (e.target.classList.contains('artist-fav-btn')) return;
+      document.querySelectorAll('.artist-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector('[data-tab="artists"]').classList.add('active');
+      const artist = state.artists.find(a => a.slug === item.dataset.slug);
+      if (artist) viewYears(artist);
+    }));
+
+  $('artistList').querySelectorAll('.artist-fav-btn').forEach(btn =>
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const nowFav = store.toggleArtistFav(btn.dataset.slug);
+      showToast(nowFav ? 'Artist favorited' : 'Removed from favorites');
+      renderArtists(state.filteredArtists);
+    }));
+}
+
+// Artist search input
+$('artistSearch').addEventListener('input', e => {
+  const q = e.target.value.toLowerCase().trim();
+  if (sidebarSource === 'nugs') {
+    renderArtists(state.filteredArtists);
+    return;
+  }
+  state.filteredArtists = q
+    ? state.artists.filter(a => a.name.toLowerCase().includes(q))
+    : state.artists;
+  renderArtists(state.filteredArtists);
+});
+
+export async function enrichArtistAvatars() {
+  const items = [...$('artistList').querySelectorAll('.artist-item')];
+  for (const item of items) {
+    const name = item.querySelector('.artist-name')?.textContent?.trim();
+    if (!name) continue;
+    const imgUrl = await lastfmArtistImage(name);
+    if (!imgUrl) continue;
+    const av = item.querySelector('.artist-avatar');
+    if (!av || av.querySelector('img')) continue;
+    const img = new Image();
+    img.alt = name;
+    img.onload = () => { av.innerHTML = ''; av.appendChild(img); av.style.backgroundImage = ''; };
+    img.src = imgUrl;
+  }
+}

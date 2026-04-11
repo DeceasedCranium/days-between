@@ -1,0 +1,227 @@
+/* ── api.js — Relisten and Nugs.net API clients ─── */
+import { nugsAuth } from './state.js';
+
+/* ── Relisten ────────────────────────────────────── */
+const API2 = 'https://api.relisten.net/api/v2';
+const API3 = 'https://api.relisten.net/api/v3';
+
+export { API2, API3 };
+
+export const api = {
+  async get(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`API error ${r.status}`);
+    return r.json();
+  },
+  artists:  ()            => api.get(`${API2}/artists`),
+  years:    (slug)        => api.get(`${API2}/artists/${slug}/years`),
+  shows:    (slug, year)  => api.get(`${API2}/artists/${slug}/years/${year}`),
+  show:     (slug, date)  => api.get(`${API2}/artists/${slug}/shows/${date}`),
+  random:   (slug)        => api.get(`${API2}/artists/${slug}/shows/random`),
+  top:      (slug)        => api.get(`${API2}/artists/${slug}/shows/top?limit=30`),
+  trending: ()            => api.get(`${API3}/trending/shows?limit=30`),
+  recent:   ()            => api.get(`${API2}/shows/recently-added?limit=30`),
+  onDate:   (m, d)        => api.get(`${API2}/shows/on-date?month=${m}&day=${d}`),
+  search:   (q)           => api.get(`${API2}/search?q=${encodeURIComponent(q)}`),
+  songs:    (slug)        => api.get(`${API2}/artists/${slug}/songs`),
+};
+
+/* ── Nugs.net ────────────────────────────────────── */
+const NUGS_ID_URL    = 'https://id.nugs.net';
+const NUGS_SUBS_URL  = 'https://subscriptions.nugs.net';
+export const NUGS_STREAM = 'https://streamapi.nugs.net';
+const NUGS_UA        = 'NugsNet/3.26.724 (Android; 7.1.2; Asus; ASUS_Z01QD; Scale/2.0; en)';
+const NUGS_UA_PLAYER = 'nugsnetAndroid';
+const NUGS_CLIENT_ID = 'Eg7HuH873H65r5rt325UytR5429';
+
+// Parse nugs date strings like "03/19/2026 18:31:47" (MM/DD/YYYY HH:MM:SS) → Unix ms
+export function parseNugsDate(s) {
+  if (!s) return 0;
+  const [datePart, timePart] = s.split(' ');
+  const [mm, dd, yyyy] = datePart.split('/');
+  return new Date(`${yyyy}-${mm}-${dd}T${timePart}Z`).getTime() / 1000;
+}
+
+export const nugsApi = {
+  async login(email, password) {
+    const body = new URLSearchParams({
+      client_id:  NUGS_CLIENT_ID,
+      grant_type: 'password',
+      scope:      'openid profile email nugsnet:api nugsnet:legacyapi offline_access',
+      username:   email,
+      password:   password,
+    });
+    const r = await fetch(`${NUGS_ID_URL}/connect/token`, {
+      method:  'POST',
+      headers: { 'User-Agent': NUGS_UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    if (!r.ok) throw new Error('nugs:login_failed');
+    const tokens = await r.json();
+
+    // Decode JWT payload for legacy fields (base64url, no signature verification needed)
+    let jwtPayload = {};
+    try {
+      const seg = tokens.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      jwtPayload = JSON.parse(atob(seg.padEnd(seg.length + (4 - seg.length % 4) % 4, '=')));
+    } catch (err) { console.error('[api] JWT decode', err); }
+
+    const [userInfo, subsArr] = await Promise.all([
+      fetch(`${NUGS_ID_URL}/connect/userinfo`, {
+        headers: { 'Authorization': `Bearer ${tokens.access_token}`, 'User-Agent': NUGS_UA },
+      }).then(r2 => r2.json()),
+      fetch(`${NUGS_SUBS_URL}/api/v1/me/subscriptions`, {
+        headers: { 'Authorization': `Bearer ${tokens.access_token}`, 'User-Agent': NUGS_UA },
+      }).then(r2 => r2.json()),
+    ]);
+
+    const sub    = Array.isArray(subsArr) ? subsArr[0] : (subsArr?.subscriptions?.[0] ?? subsArr);
+    const planId = sub?.plan?.planId ?? sub?.promo?.plan?.planId ?? '';
+    if (!sub?.isContentAccessible) throw new Error('nugs:no_subscription');
+
+    nugsAuth.set({
+      access_token:    tokens.access_token,
+      refresh_token:   tokens.refresh_token,
+      expires_at:      Date.now() + 600 * 60 * 1000,
+      legacy_token:    jwtPayload.legacyToken  ?? '',
+      legacy_uguid:    jwtPayload.legacyUguid  ?? '',
+      user_id:         userInfo.sub            ?? '',
+      plan_id:         String(planId),
+      subscription_id: String(sub?.legacySubscriptionId ?? ''),
+      start_stamp:     sub?.startedAt ? Math.floor(parseNugsDate(sub.startedAt)) : 0,
+      end_stamp:       sub?.endsAt    ? Math.floor(parseNugsDate(sub.endsAt))    : 0,
+    });
+  },
+
+  async catalog(artistId, offset = 0) {
+    const auth = nugsAuth.get();
+    const url  = `${NUGS_STREAM}/api.aspx?method=catalog.containersAll`
+      + `&artistList=${artistId}&limit=100&startOffset=${offset}&availType=1&vdisp=1`;
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': NUGS_UA,
+        ...(auth?.access_token ? { 'Authorization': `Bearer ${auth.access_token}` } : {}),
+      },
+    });
+    if (!r.ok) throw new Error(`nugs catalog ${r.status}`);
+    const text = await r.text();
+    if (text.trimStart().startsWith('<')) throw new Error('nugs:unauthenticated');
+    return JSON.parse(text);
+  },
+
+  async release(containerId) {
+    const auth = nugsAuth.get();
+    const url  = `${NUGS_STREAM}/api.aspx?method=catalog.container&containerID=${containerId}&vdisp=1`;
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': NUGS_UA,
+        ...(auth?.access_token ? { 'Authorization': `Bearer ${auth.access_token}` } : {}),
+      },
+    });
+    if (!r.ok) throw new Error(`nugs release ${r.status}`);
+    const text = await r.text();
+    if (text.trimStart().startsWith('<')) throw new Error('nugs:unauthenticated');
+    return JSON.parse(text);
+  },
+
+  async streamUrl(trackId) {
+    const auth = nugsAuth.get();
+    if (!auth) throw new Error('nugs:unauthenticated');
+    const base = {
+      app:                     '1',
+      subscriptionID:          auth.subscription_id,
+      subCostplanIDAccessList: auth.plan_id,
+      nn_userID:               auth.user_id,
+      startDateStamp:          String(auth.start_stamp),
+      endDateStamp:            String(auth.end_stamp),
+    };
+    let lastData = null;
+    for (const platformID of [1, 10, 4, 7]) {
+      const params = new URLSearchParams({ platformID, trackID: trackId, ...base });
+      const r = await fetch(`${NUGS_STREAM}/bigriver/subPlayer.aspx?${params}`,
+        { headers: { 'User-Agent': NUGS_UA_PLAYER } });
+      if (!r.ok) throw new Error(`nugs stream ${r.status}`);
+      const data = await r.json();
+      const url  = data.streamLink ?? data.StreamLink ?? null;
+      if (url) return url;
+      lastData = data;
+    }
+    console.warn('[api] streamUrl null for trackId', trackId, 'last response:', lastData);
+    const policy = lastData?.policyMessage ?? lastData?.PolicyMessage ?? lastData?.message ?? lastData?.Message;
+    if (policy) throw new Error(`nugs:policy:${policy}`);
+    return null;
+  },
+
+  async vidStreamUrl(skuId, containerId) {
+    const auth = nugsAuth.get();
+    if (!auth) throw new Error('nugs:unauthenticated');
+    const params = new URLSearchParams({
+      skuId, containerID: containerId, chap: '1', app: '1',
+      subscriptionID:          auth.subscription_id,
+      subCostplanIDAccessList: auth.plan_id,
+      nn_userID:               auth.user_id,
+      startDateStamp:          String(auth.start_stamp),
+      endDateStamp:            String(auth.end_stamp),
+    });
+    const r = await fetch(`${NUGS_STREAM}/bigriver/subPlayer.aspx?${params}`,
+      { headers: { 'User-Agent': NUGS_UA_PLAYER } });
+    if (!r.ok) throw new Error(`nugs vid ${r.status}`);
+    const data = await r.json();
+    return data.streamLink ?? data.StreamLink ?? null;
+  },
+
+  async allArtists() {
+    if (nugsApi._artistCache) return nugsApi._artistCache;
+    const auth = nugsAuth.get();
+    const headers = {
+      'User-Agent': NUGS_UA,
+      ...(auth?.access_token ? { 'Authorization': `Bearer ${auth.access_token}` } : {}),
+    };
+    let all = [], offset = 1, batch;
+    do {
+      const r = await fetch(
+        `${NUGS_STREAM}/api.aspx?method=catalog.artists&limit=500&startOffset=${offset}`,
+        { headers });
+      if (!r.ok) break;
+      const data = await r.json();
+      batch = data?.Response?.artists ?? [];
+      all   = all.concat(batch);
+      offset += 500;
+    } while (batch.length === 500);
+    nugsApi._artistCache = all;
+    return all;
+  },
+
+  searchArtists(query) {
+    const q = query.toLowerCase().trim();
+    return (nugsApi._artistCache ?? [])
+      .filter(a => a.artistName?.toLowerCase().includes(q))
+      .slice(0, 20)
+      .map(a => ({ id: String(a.artistID), name: a.artistName, numShows: a.numShows ?? 0 }));
+  },
+
+  async refresh() {
+    const auth = nugsAuth.get();
+    if (!auth?.refresh_token) return;
+    const body = new URLSearchParams({
+      client_id:     NUGS_CLIENT_ID,
+      grant_type:    'refresh_token',
+      refresh_token: auth.refresh_token,
+    });
+    const r = await fetch(`${NUGS_ID_URL}/connect/token`, {
+      method:  'POST',
+      headers: { 'User-Agent': NUGS_UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    if (r.ok) {
+      const tokens = await r.json();
+      nugsAuth.set({
+        ...auth,
+        access_token:  tokens.access_token,
+        refresh_token: tokens.refresh_token ?? auth.refresh_token,
+        expires_at:    Date.now() + 600 * 60 * 1000,
+      });
+    }
+    // Refresh failed — leave existing token rather than logging out
+  },
+};
