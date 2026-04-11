@@ -1,8 +1,9 @@
 /* ── app.js — boot shell ────────────────────────── */
 import { $, showToast }             from './utils.js';
-import { state, settings, nugsAuth, nav, sidebarSource, setSidebarSource } from './state.js';
+import { state, settings, nugsAuth, nav, sidebarSource, setSidebarSource,
+         loadAll, getResume, setResume } from './state.js';
 import { api }                       from './api.js';
-import { setLfmKey }                 from './lastfm.js';
+import { setLfmKey, lfm }            from './lastfm.js';
 import {
   audio, playing, setPlaying, cast, setRadioMode,
   setPlayerArt, setPlayerSub, setSaveResumeState,
@@ -27,7 +28,7 @@ function saveResumeState() {
   const track = state.queue[state.queueIdx];
   const url   = track?.mp3_url ?? track?.stream_url;
   if (!url) return;
-  localStorage.setItem('db-resume', JSON.stringify({
+  setResume({
     mp3_url:     track.mp3_url    ?? null,
     stream_url:  track.stream_url ?? null,
     _nugs:       track._nugs      ?? false,
@@ -37,7 +38,7 @@ function saveResumeState() {
     showDate:    state.show?.display_date ?? '',
     currentTime: audio.currentTime,
     volume:      audio.volume,
-  }));
+  });
 }
 setSaveResumeState(saveResumeState);
 
@@ -137,12 +138,16 @@ window.ipc?.on('cast-status', status => {
 
 /* ── Boot ────────────────────────────────────────── */
 async function init() {
+  // Load all IndexedDB stores into memory before touching any UI
+  await loadAll();
+  lfm.load(); // sync read from cache — must follow loadAll()
+
   applyTheme(settings.getKey('theme', 'dark'));
   applyAccent(settings.getKey('accent', 'default'));
   applyDensity(settings.getKey('density', 'comfortable'));
 
   // Resume last position
-  const resume = (() => { try { return JSON.parse(localStorage.getItem('db-resume') || 'null'); } catch { return null; } })();
+  const resume = getResume();
   const resumeUrl = resume?.mp3_url ?? resume?.stream_url;
   if (resumeUrl && !resume?._nugs) {
     audio.src = resumeUrl;

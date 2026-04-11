@@ -1,5 +1,6 @@
 /* ── lastfm.js — scrobbling, artist bio, radio ─── */
 import { esc, safeInnerHTML, showToast } from './utils.js';
+import { getLfmSession, setLfmSession }  from './state.js';
 
 // LFM_KEY is injected at boot via IPC — never hardcode
 let LFM_KEY = '';
@@ -85,15 +86,13 @@ export const lfm = {
   startTime: 0,
   timer:     null,
 
+  // Called by app.js after loadAll() so the IndexedDB cache is ready
   load() {
-    try {
-      this.session = JSON.parse(localStorage.getItem('lfm_session') ?? 'null');
-    } catch (err) { console.error('[lastfm] lfm.load', err); }
+    this.session = getLfmSession();
   },
 
   save() {
-    if (this.session) localStorage.setItem('lfm_session', JSON.stringify(this.session));
-    else localStorage.removeItem('lfm_session');
+    setLfmSession(this.session || null);
   },
 
   get sk() { return this.session?.key ?? null; },
@@ -123,4 +122,4 @@ export const lfm = {
   },
 };
 
-lfm.load();
+// lfm.load() is called by app.js after loadAll() completes

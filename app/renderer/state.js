@@ -1,5 +1,81 @@
-/* ── state.js — shared mutable state and localStorage stores ─── */
+/* ── state.js — shared mutable state and IndexedDB stores ─────── */
 import { $ } from './utils.js';
+import localforage from './localforage-esm.js';
+
+/* ── localforage config ──────────────────────────── */
+localforage.config({
+  name:        'days-between',
+  storeName:   'app_store',
+  description: 'Days Between v1.1 persistent storage',
+});
+
+/* ── In-memory cache — populated at boot by loadAll() ────────────
+   Reads are synchronous (from _cache); writes fire-and-forget to
+   IndexedDB via _set() so callers need no await at call sites.
+   ──────────────────────────────────────────────────────────────── */
+const _cache = {};
+
+function _set(key, val) {
+  _cache[key] = val;
+  localforage.setItem(key, val).catch(err => console.error('[state] persist', key, err));
+}
+
+function _remove(key) {
+  _cache[key] = null;
+  localforage.removeItem(key).catch(err => console.error('[state] remove', key, err));
+}
+
+// Load one key from IndexedDB; falls back to localStorage for v1.0→v1.1 migration
+async function _load(key, def) {
+  try {
+    let val = await localforage.getItem(key);
+    if (val === null) {
+      const raw = localStorage.getItem(key);
+      if (raw !== null) {
+        try { val = JSON.parse(raw); } catch { val = raw; }
+        await localforage.setItem(key, val);
+        localStorage.removeItem(key);
+        console.info('[state] migrated', key, 'localStorage → IndexedDB');
+      }
+    }
+    _cache[key] = val ?? def;
+  } catch (err) {
+    console.error('[state] _load', key, err);
+    _cache[key] = def;
+  }
+}
+
+/* ── Boot loader — must complete before any UI renders ──────────── */
+export async function loadAll() {
+  await Promise.all([
+    _load('db-favorites',     []),
+    _load('db-artist-favs',   []),
+    _load('db-history',       []),
+    _load('db-ratings',       {}),
+    _load('db-attended',      []),
+    _load('db-bookmarks',     []),
+    _load('db-settings',      {}),
+    _load('db-nugs-auth',     null),
+    _load('db-tapes',         []),
+    _load('db-sidebar-source', 'relisten'),
+    _load('db-nugs-artists',  []),
+    _load('db-resume',        null),
+    _load('lfm_session',      null),
+  ]);
+  // Update live-exported let bindings so importers see the persisted value
+  sidebarSource = _cache['db-sidebar-source'] ?? 'relisten';
+}
+
+/* ── Resume state (read/written by app.js) ───────────────────── */
+export function getResume()  { return _cache['db-resume'] ?? null; }
+export function setResume(v) { _set('db-resume', v); }
+
+/* ── LFM session (read/written by lastfm.js) ─────────────────── */
+export function getLfmSession()  { return _cache['lfm_session'] ?? null; }
+export function setLfmSession(v) {
+  if (v) _set('lfm_session', v);
+  else   _remove('lfm_session');
+}
 
 /* ── Player / nav state ──────────────────────────── */
 export const state = {
@@ -14,39 +90,35 @@ export const state = {
 
 /* ── Nugs artist list ────────────────────────────── */
 export const nugsArtistStore = {
-  KEY: 'db-nugs-artists',
-  get()   {
-    try { return JSON.parse(localStorage.getItem(nugsArtistStore.KEY) || '[]'); }
-    catch { return []; }
-  },
-  save(v) { localStorage.setItem(nugsArtistStore.KEY, JSON.stringify(v)); },
+  get()   { return _cache['db-nugs-artists'] ?? []; },
+  save(v) { _set('db-nugs-artists', v); },
   add(id, name) {
-    const all  = nugsArtistStore.get();
+    const all  = this.get();
     const slug = `nugs-${id}`;
     if (all.find(a => a.id === String(id))) return false;
     all.push({ id: String(id), name, slug, _nugs: true });
-    nugsArtistStore.save(all);
+    this.save(all);
     return true;
   },
-  remove(id) { nugsArtistStore.save(nugsArtistStore.get().filter(a => a.id !== String(id))); },
+  remove(id) { this.save(this.get().filter(a => a.id !== String(id))); },
 };
 
 export const nugsReleasesCache = {};
-export let sidebarSource = localStorage.getItem('db-sidebar-source') ?? 'relisten';
+export let sidebarSource = 'relisten'; // overwritten by loadAll()
 export function setSidebarSource(v) {
   sidebarSource = v;
-  localStorage.setItem('db-sidebar-source', v);
+  _set('db-sidebar-source', v);
 }
 
 /* ── Favorites & History ─────────────────────────── */
 export const store = {
-  getFavs()    { try { return JSON.parse(localStorage.getItem('db-favorites') || '[]'); } catch { return []; } },
-  saveFavs(v)  { localStorage.setItem('db-favorites', JSON.stringify(v)); },
+  getFavs()    { return _cache['db-favorites'] ?? []; },
+  saveFavs(v)  { _set('db-favorites', v); },
   isFav(artistSlug, date) {
-    return store.getFavs().some(f => f.artistSlug === artistSlug && f.date === date);
+    return this.getFavs().some(f => f.artistSlug === artistSlug && f.date === date);
   },
   toggleFav(show, artist) {
-    const favs = store.getFavs();
+    const favs = this.getFavs();
     const idx  = favs.findIndex(f => f.artistSlug === artist.slug && f.date === show.display_date);
     if (idx >= 0) {
       favs.splice(idx, 1);
@@ -59,24 +131,24 @@ export const store = {
         venueName:   show.venue?.name ?? '',
       });
     }
-    store.saveFavs(favs);
+    this.saveFavs(favs);
     return idx < 0;
   },
 
-  getArtistFavs()    { try { return JSON.parse(localStorage.getItem('db-artist-favs') || '[]'); } catch { return []; } },
-  saveArtistFavs(v)  { localStorage.setItem('db-artist-favs', JSON.stringify(v)); },
-  isArtistFav(slug)  { return store.getArtistFavs().includes(slug); },
+  getArtistFavs()    { return _cache['db-artist-favs'] ?? []; },
+  saveArtistFavs(v)  { _set('db-artist-favs', v); },
+  isArtistFav(slug)  { return this.getArtistFavs().includes(slug); },
   toggleArtistFav(slug) {
-    const favs = store.getArtistFavs();
+    const favs = this.getArtistFavs();
     const idx  = favs.indexOf(slug);
     if (idx >= 0) favs.splice(idx, 1); else favs.push(slug);
-    store.saveArtistFavs(favs);
+    this.saveArtistFavs(favs);
     return idx < 0;
   },
 
-  getHistory()  { try { return JSON.parse(localStorage.getItem('db-history') || '[]'); } catch { return []; } },
+  getHistory()  { return _cache['db-history'] ?? []; },
   pushHistory(track, artist, show) {
-    const hist = store.getHistory();
+    const hist = this.getHistory();
     hist.unshift({
       trackTitle: track.title || 'Unknown',
       artistName: artist?.name ?? '',
@@ -87,33 +159,31 @@ export const store = {
       duration:   track.duration ?? 0,
     });
     if (hist.length > 100) hist.length = 100;
-    localStorage.setItem('db-history', JSON.stringify(hist));
+    _set('db-history', hist);
   },
 
   // Personal show ratings 1–5
-  getRatings()  { try { return JSON.parse(localStorage.getItem('db-ratings') || '{}'); } catch { return {}; } },
+  getRatings()  { return _cache['db-ratings'] ?? {}; },
   getRating(artistSlug, date)  { return this.getRatings()[`${artistSlug}:${date}`] ?? null; },
   setRating(artistSlug, date, rating) {
     const all = this.getRatings();
     if (rating == null) delete all[`${artistSlug}:${date}`];
     else all[`${artistSlug}:${date}`] = rating;
-    localStorage.setItem('db-ratings', JSON.stringify(all));
+    _set('db-ratings', all);
   },
 
   // "I was there" attendance
   getAttended() {
-    try {
-      const raw = JSON.parse(localStorage.getItem('db-attended') || '[]');
-      return raw.map(item => {
-        if (typeof item === 'string') {
-          const colonIdx  = item.indexOf(':');
-          const artistSlug = item.slice(0, colonIdx);
-          const date       = item.slice(colonIdx + 1);
-          return { artistSlug, artistName: artistSlug, date, venueName: '', venueLocation: '', markedAt: '' };
-        }
-        return item;
-      });
-    } catch (err) { console.error('[state] getAttended', err); return []; }
+    const raw = _cache['db-attended'] ?? [];
+    return raw.map(item => {
+      if (typeof item === 'string') {
+        const colonIdx  = item.indexOf(':');
+        const artistSlug = item.slice(0, colonIdx);
+        const date       = item.slice(colonIdx + 1);
+        return { artistSlug, artistName: artistSlug, date, venueName: '', venueLocation: '', markedAt: '' };
+      }
+      return item;
+    });
   },
   isAttended(artistSlug, date) {
     return this.getAttended().some(a => a.artistSlug === artistSlug && a.date === date);
@@ -133,79 +203,78 @@ export const store = {
         markedAt:      new Date().toISOString(),
       });
     }
-    localStorage.setItem('db-attended', JSON.stringify(all));
+    _set('db-attended', all);
     return idx < 0;
   },
 
   // Bookmarks (timestamp pins)
-  getBookmarks()  { try { return JSON.parse(localStorage.getItem('db-bookmarks') || '[]'); } catch { return []; } },
+  getBookmarks()  { return _cache['db-bookmarks'] ?? []; },
   addBookmark(b) {
     const all = this.getBookmarks();
     all.unshift(b);
     if (all.length > 200) all.length = 200;
-    localStorage.setItem('db-bookmarks', JSON.stringify(all));
+    _set('db-bookmarks', all);
   },
   removeBookmark(idx) {
     const all = this.getBookmarks();
     all.splice(idx, 1);
-    localStorage.setItem('db-bookmarks', JSON.stringify(all));
+    _set('db-bookmarks', all);
   },
   removeAttended(idx) {
     const all = this.getAttended();
     all.splice(idx, 1);
-    localStorage.setItem('db-attended', JSON.stringify(all));
+    _set('db-attended', all);
   },
 };
 
 /* ── Settings store ──────────────────────────────── */
 export const settings = {
-  get()           { try { return JSON.parse(localStorage.getItem('db-settings') || '{}'); } catch { return {}; } },
-  set(v)          { localStorage.setItem('db-settings', JSON.stringify(v)); },
-  getKey(k, def)  { return settings.get()[k] ?? def; },
-  setKey(k, v)    { const s = settings.get(); s[k] = v; settings.set(s); },
+  get()           { return _cache['db-settings'] ?? {}; },
+  set(v)          { _set('db-settings', v); },
+  getKey(k, def)  { return this.get()[k] ?? def; },
+  setKey(k, v)    { const s = this.get(); s[k] = v; this.set(s); },
 };
 
 /* ── Nugs auth store ─────────────────────────────── */
 export const nugsAuth = {
-  KEY: 'db-nugs-auth',
-  get()   { try { return JSON.parse(localStorage.getItem(nugsAuth.KEY) || 'null'); } catch { return null; } },
-  set(v)  { localStorage.setItem(nugsAuth.KEY, JSON.stringify(v)); },
-  clear() { localStorage.removeItem(nugsAuth.KEY); },
+  get()   { return _cache['db-nugs-auth'] ?? null; },
+  set(v)  { _set('db-nugs-auth', v); },
+  clear() { _remove('db-nugs-auth'); },
   isValid() {
-    const a = nugsAuth.get();
+    const a = this.get();
     return !!(a?.access_token && a?.expires_at && Date.now() < a.expires_at);
   },
 };
 
 /* ── Tapes (cross-show playlists) ────────────────── */
 export const tapes = {
-  getAll()  { try { return JSON.parse(localStorage.getItem('db-tapes') || '[]'); } catch { return []; } },
-  save(v)   { localStorage.setItem('db-tapes', JSON.stringify(v)); },
+  getAll()  { return _cache['db-tapes'] ?? []; },
+  save(v)   { _set('db-tapes', v); },
   create(name) {
-    const all = tapes.getAll();
+    const all = this.getAll();
     const id  = Date.now().toString();
     all.push({ id, name, tracks: [], createdAt: new Date().toISOString() });
-    tapes.save(all);
+    this.save(all);
     return id;
   },
-  delete(id)  { tapes.save(tapes.getAll().filter(t => t.id !== id)); },
+  delete(id)  { this.save(this.getAll().filter(t => t.id !== id)); },
   rename(id, name) {
-    const all = tapes.getAll();
+    const all = this.getAll();
     const t   = all.find(t => t.id === id);
-    if (t) { t.name = name; tapes.save(all); }
+    if (t) { t.name = name; this.save(all); }
   },
   addTrack(id, track) {
-    const all  = tapes.getAll();
+    const all  = this.getAll();
     const tape = all.find(t => t.id === id);
     if (tape && !tape.tracks.some(tr => tr.uuid === track.uuid)) {
-      tape.tracks.push(track); tapes.save(all); return true;
+      tape.tracks.push(track); this.save(all); return true;
     }
     return false;
   },
   removeTrack(id, uuid) {
-    const all  = tapes.getAll();
+    const all  = this.getAll();
     const tape = all.find(t => t.id === id);
-    if (tape) { tape.tracks = tape.tracks.filter(tr => tr.uuid !== uuid); tapes.save(all); }
+    if (tape) { tape.tracks = tape.tracks.filter(tr => tr.uuid !== uuid); this.save(all); }
   },
 };
 
