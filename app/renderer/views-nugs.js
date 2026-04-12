@@ -377,7 +377,10 @@ export function nugsViewVideo(artist, show, track) {
     vidHls = new Hls({ enableWorker: false });
     vidHls.loadSource(url);
     vidHls.attachMedia(vid);
-    vidHls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) showToast('Video stream error'); });
+    vidHls.on(Hls.Events.ERROR, (_, d) => {
+      console.error('[nugsViewVideo] HLS error:', d.type, d.details, d.response?.code, url);
+      if (d.fatal) showToast('Video stream error');
+    });
   } else {
     vid.src = url;
   }
@@ -630,32 +633,48 @@ export async function viewNugsDashboard(initialTab) {
     try {
       const data      = await nugsApi.release(cid);
       const container = data?.Response ?? data?.response ?? {};
-      const skuId     = container.svodskuID && container.svodskuID !== 0
-        ? String(container.svodskuID)
-        : String((container.products ?? [])[0]?.skuID ?? '');
 
-      const videoTrack = {
-        uuid:              `nugs-dash-${cid}`,
-        title:             container.videoTitle || container.performanceDate || card.title || 'Show',
-        duration:          0,
-        stream_url:        null,
-        _nugs:             true,
-        _nugs_video:       true,
-        _nugs_skuId:       skuId,
-        _nugs_containerId: String(cid),
-      };
+      const containerVideoUrl = container.videoURL || container.vodURL || null;
+
+      // Only route to release page if the container is provably audio-only:
+      // all products are MP3/FLAC/WAV and there is no video SKU or direct video URL.
+      const products    = container.products ?? [];
+      const isAudioOnly = products.length > 0
+        && products.every(p => /^(mp3|flac|wav|aac)$/i.test(p.formatStr ?? ''))
+        && !(container.svodskuID && container.svodskuID !== 0)
+        && !containerVideoUrl;
+
       const artist = {
+        id:   String(container.artistID ?? ''),
         name: card.artist || container.artistName || 'Nugs',
         slug: `nugs-${cid}`,
         _nugs: true,
       };
-      const show = {
-        display_date: container.performanceDate ?? '',
-        venue: { name: [container.venueName, container.venueCity].filter(Boolean).join(' — ') },
-        _nugs: true,
-      };
 
-      await nugsResolveAndPlay(videoTrack, artist, show);
+      if (isAudioOnly) {
+        // Audio-only recording — show the release page with Play All / track list
+        nugsViewRelease(artist, String(cid));
+      } else {
+        const skuId = container.svodskuID && container.svodskuID !== 0
+          ? String(container.svodskuID)
+          : String(products[0]?.skuID ?? '');
+        const show = {
+          display_date: container.performanceDate ?? '',
+          venue: { name: [container.venueName, container.venueCity].filter(Boolean).join(' — ') },
+          _nugs: true,
+        };
+        const videoTrack = {
+          uuid:              `nugs-dash-${cid}`,
+          title:             container.videoTitle || container.performanceDate || card.title || 'Show',
+          duration:          0,
+          stream_url:        containerVideoUrl || null,
+          _nugs:             true,
+          _nugs_video:       true,
+          _nugs_skuId:       skuId,
+          _nugs_containerId: String(cid),
+        };
+        await nugsResolveAndPlay(videoTrack, artist, show);
+      }
     } catch (err) {
       handleNugsAuthError(err);
     }

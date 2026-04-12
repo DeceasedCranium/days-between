@@ -718,12 +718,20 @@ app.whenReady().then(() => {
         '*://id.nugs.net/*',
         '*://subscriptions.nugs.net/*',
         '*://www.nugs.net/*',           // needed for dashboard HTML scraping
+        '*://*.akamaized.net/*',        // nugs HLS stream segments (hdnea token requires Referer)
       ]
     },
     (details, callback) => {
       const url = details.url;
 
-      if (url.includes('www.nugs.net')) {
+      if (url.includes('akamaized.net')) {
+        // HLS stream segments — must look like they come from the nugs player
+        details.requestHeaders['Referer']    = 'https://play.nugs.net/';
+        details.requestHeaders['Origin']     = 'https://play.nugs.net';
+        details.requestHeaders['User-Agent'] = 'nugsnetAndroid';
+        callback({ requestHeaders: details.requestHeaders });
+        return;
+      } else if (url.includes('www.nugs.net')) {
         // Dashboard HTML page scraping — send a realistic Chrome browser UA so
         // nugs.net doesn't detect us as a bot and return HTTP 410.
         // Do NOT override Origin/Referer for these requests.

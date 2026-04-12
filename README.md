@@ -32,6 +32,14 @@ Grab the latest installer from the [**Releases page**](https://github.com/Deceas
 - **Chromecast** — Cast audio and video to any Cast device on your network
 - **HLS streaming** — via hls.js with automatic fallback
 
+### nugs.net Integration
+- **Live Hub** — Browse live and upcoming webcasts; stream HLS video directly in the app
+- **Recent Livestreams** — One-click access to the latest nugs.net video releases; video shows auto-play inline, audio recordings navigate to the full track list
+- **My Library / Stash** — Access your purchased and saved recordings
+- **Inline video player** — Full hls.js video playback with Fullscreen and **Cast to TV** buttons
+- **Search & Pin sidebar** — Instant artist search (no page loads); pin favourite artists for quick access; pinned artists shown by default
+- **Nugs global search** — Artist name search surfaced alongside Relisten results
+
 ### Discovery
 - **Artist / Year / Show / Track** browsing with full-text search
 - **On This Day** — every show played on today's date, any year
@@ -146,8 +154,9 @@ No telemetry, no accounts, no cloud sync.
 - **Audio engine** (`audio-engine.js`) — dual-buffer gapless with element-swap crossfade; event-routing proxy so listener bindings survive primary/staging swaps
 - **EQ engine** (`eq-engine.js`) — singleton `AudioContext`; both audio elements permanently connected to the same 5-node peaking BiquadFilter chain; virtual bypass (gains → 0 dB, nodes stay connected)
 - **Storage** (`state.js`) — in-memory cache with synchronous reads; async writes fire-and-forget to IndexedDB; v1.0 → v1.1 migration runs once on `loadAll()`
+- **nugs API** (`api.js`) — pure JS fetch against `streamapi.nugs.net`; no ghost browser for stream resolution; ghost window used only for DOM scraping (live hub, library pages)
 - **XSS hardening** — all template strings go through `safeInnerHTML()` (strips `on*` attributes and `javascript:` hrefs); dynamic user content always wrapped in `esc()`
-- **CORS** — `crossorigin="anonymous"` on both `<audio>` elements; main-process `onHeadersReceived` injects `Access-Control-Allow-Origin: *` for archive.org audio and nugs image CDN
+- **CORS** — `crossorigin="anonymous"` on both `<audio>` elements; main-process `onHeadersReceived` injects `Access-Control-Allow-Origin: *` for archive.org audio and nugs image CDN; `onBeforeSendHeaders` injects `Referer`/`Origin`/`User-Agent` for nugs API, stream, and Akamai CDN requests
 
 ---
 
@@ -155,6 +164,7 @@ No telemetry, no accounts, no cloud sync.
 
 | Version | Highlights |
 |---------|-----------|
+| **v1.5** | nugs.net Search & Pin sidebar (instant search, localStorage pins); inline HLS video player for livestreams and VOD with Fullscreen + Cast buttons; API-native stream resolution (no ghost browser for playback); audio-only releases auto-route to track list |
 | **v1.4** | Glass UI — transparent window, backdrop-filter blur on sidebar/titlebar/player, Inter typography, floating player bar, 20px-radius cards, CSS enter animation on view swap |
 | **v1.3** | 5-band graphic EQ with IndexedDB persistence and `Ctrl+E` bypass shortcut |
 | **v1.2** | Gapless playback via dual-buffer audio engine with 0.4 s element-level crossfade |
