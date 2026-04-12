@@ -4,6 +4,8 @@ import { state, nav, nugsAuth, nugsArtistStore, nugsReleasesCache } from './stat
 import { nugsApi } from './api.js';
 import { injectArtistBio, lastfmArtistImage } from './lastfm.js';
 import { nugsResolveAndPlay, handleNugsAuthError, setPlayerArt } from './player.js';
+import { scrapeLive, scrapeRecent, scrapeStash, extractContainerId } from './nugs-scraper.js';
+import { startLiveStream } from './video-player.js';
 // NOTE: setBreadcrumb, fadeIn, renderArtists come from views-core.js.
 // ES module circular imports are safe here — functions are only called
 // inside event handlers and async functions, never at module init time.
@@ -378,5 +380,186 @@ export function searchNugsLocal(q) {
     }
   }
   return Promise.resolve(results);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Nugs Dynamic Dashboard
+   Tabs: Live · Recent · My Stash
+   Each tab scrapes nugs.net SSR HTML and renders glassmorphic cards.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const DASH_TABS = [
+  { id: 'live',   label: '● Live',   scrape: scrapeLive   },
+  { id: 'recent', label: 'Recent',   scrape: scrapeRecent },
+  { id: 'stash',  label: 'My Stash', scrape: scrapeStash  },
+];
+
+// Per-tab cache so switching tabs doesn't re-fetch
+const _dashCache = {};
+
+export async function viewNugsDashboard() {
+  nav.record(viewNugsDashboard, []);
+  setBreadcrumb([{ label: 'Nugs' }]);
+
+  const ci = $('contentInner');
+  ci.style.overflow = '';
+  ci.style.padding  = '';
+
+  ci.innerHTML = `
+    <div class="nugs-dash">
+      <div class="nugs-dash-header">
+        <div class="nugs-dash-tabs" id="nugsDashTabs">
+          ${DASH_TABS.map((t, i) => `
+            <button class="nugs-dash-tab${i === 0 ? ' active' : ''}" data-tab="${t.id}">
+              ${t.label}
+            </button>`).join('')}
+        </div>
+      </div>
+      <div class="nugs-dash-body" id="nugsDashBody">
+        <div class="loading"><div class="spinner"></div></div>
+      </div>
+    </div>`;
+
+  let activeTab = DASH_TABS[0].id;
+
+  async function loadTab(tabId) {
+    const tab = DASH_TABS.find(t => t.id === tabId);
+    if (!tab) return;
+    activeTab = tabId;
+
+    // Update tab active state
+    $('nugsDashTabs').querySelectorAll('.nugs-dash-tab').forEach(btn =>
+      btn.classList.toggle('active', btn.dataset.tab === tabId));
+
+    const body = $('nugsDashBody');
+    if (!body) return;
+
+    // Use cache if available
+    if (_dashCache[tabId]) {
+      renderDashCards(body, _dashCache[tabId], tabId);
+      return;
+    }
+
+    body.innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
+
+    try {
+      const cards = await tab.scrape();
+      _dashCache[tabId] = cards;
+      renderDashCards(body, cards, tabId);
+    } catch (err) {
+      console.error('[nugs-dash] scrape error', tabId, err);
+      body.innerHTML = `
+        <div class="empty-state" style="padding:40px;text-align:center;color:var(--text3)">
+          <div style="font-size:32px;margin-bottom:12px">📡</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text2);margin-bottom:8px">
+            Couldn't load ${tab.label.replace('●','').trim()}
+          </div>
+          <div style="font-size:12px">
+            ${err.message?.includes('401') || err.message?.includes('403')
+              ? 'Sign in to your Nugs account in Settings to access this section.'
+              : esc(err.message ?? 'Unknown error')}
+          </div>
+          <button class="action-btn" style="margin-top:16px" id="dashRetry">Retry</button>
+        </div>`;
+      $('dashRetry')?.addEventListener('click', () => loadTab(tabId));
+    }
+  }
+
+  function renderDashCards(container, cards, tabId) {
+    if (!cards?.length) {
+      container.innerHTML = `
+        <div class="empty-state" style="padding:40px;text-align:center;color:var(--text3)">
+          <div style="font-size:32px;margin-bottom:12px">🎵</div>
+          <div style="font-size:13px">Nothing here yet</div>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = `<div class="nugs-dash-grid" id="nugsDashGrid"></div>`;
+    const grid = $('nugsDashGrid');
+
+    grid.innerHTML = cards.map((card, idx) => `
+      <div class="nugs-dash-card${card.isLive ? ' is-live' : ''}" data-idx="${idx}">
+        <div class="nugs-dash-card-art">
+          ${card.imageUrl
+            ? `<img src="${esc(card.imageUrl)}" alt="${esc(card.title)}" loading="lazy">`
+            : `<div class="nugs-dash-card-init">${esc((card.artist || card.title)[0]?.toUpperCase() ?? '?')}</div>`}
+          ${card.isLive ? `<div class="nugs-dash-live-badge">● LIVE</div>` : ''}
+          <div class="nugs-dash-card-overlay">
+            <div class="nugs-dash-card-play">▶</div>
+          </div>
+        </div>
+        <div class="nugs-dash-card-info">
+          <div class="nugs-dash-card-title">${esc(card.title)}</div>
+          ${card.artist ? `<div class="nugs-dash-card-artist">${esc(card.artist)}</div>` : ''}
+          ${card.date   ? `<div class="nugs-dash-card-date">${esc(card.date)}</div>` : ''}
+        </div>
+      </div>`).join('');
+
+    grid.querySelectorAll('.nugs-dash-card').forEach(el => {
+      el.addEventListener('click', () => {
+        const card = cards[+el.dataset.idx];
+        if (!card) return;
+        handleDashCardClick(card);
+      });
+    });
+  }
+
+  async function handleDashCardClick(card) {
+    // 1. Live shows → try to open as HLS stream
+    if (card.isLive && card.linkUrl) {
+      showToast('Loading live stream…');
+      try {
+        // Fetch the show page to extract the stream URL
+        const r = await fetch(card.linkUrl, { credentials: 'include' });
+        const html = await r.text();
+        const doc  = new DOMParser().parseFromString(html, 'text/html');
+
+        // Look for a stream URL in script tags / data attributes
+        const scripts = [...doc.querySelectorAll('script')].map(s => s.textContent).join('\n');
+        const m3u8Match = scripts.match(/["'](https?:\/\/[^"']*master\.m3u8[^"']*)/);
+        if (m3u8Match) {
+          startLiveStream(m3u8Match[1], card.title);
+          return;
+        }
+        // If we can't find an m3u8, open the page link in a browser as fallback
+        window.ipc?.openUrl(card.linkUrl);
+      } catch (err) {
+        console.error('[nugs-dash] live click', err);
+        window.ipc?.openUrl(card.linkUrl);
+      }
+      return;
+    }
+
+    // 2. Recorded content → try to resolve via nugsApi if we have a containerID
+    if (card.linkUrl) {
+      const cid = extractContainerId(card.linkUrl);
+      if (cid) {
+        showToast('Loading…');
+        try {
+          // Build a minimal track object and resolve via the existing nugs pipeline
+          const fakeTrack = {
+            _nugs: true,
+            _nugs_containerId: cid,
+            _nugs_skuId: null,
+            title: card.title,
+          };
+          await nugsResolveAndPlay(fakeTrack, { name: card.artist || 'Nugs' }, null);
+          return;
+        } catch (err) {
+          handleNugsAuthError(err);
+          return;
+        }
+      }
+      // Last resort: open in browser
+      window.ipc?.openUrl(card.linkUrl);
+    }
+  }
+
+  // Wire tab buttons and load first tab
+  $('nugsDashTabs').querySelectorAll('.nugs-dash-tab').forEach(btn =>
+    btn.addEventListener('click', () => loadTab(btn.dataset.tab)));
+
+  loadTab('live');
 }
 

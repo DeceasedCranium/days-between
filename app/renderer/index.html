@@ -48,6 +48,7 @@
       <div class="source-tabs">
         <button class="source-tab" data-source="relisten">Relisten</button>
         <button class="source-tab" data-source="nugs">Nugs</button>
+        <button class="source-tab" data-source="mixlr">Mixlr</button>
       </div>
       <div class="sidebar-search">
         <input id="artistSearch" type="text" placeholder="Search artists…" autocomplete="off" spellcheck="false">
@@ -79,6 +80,22 @@
         </div>
       </div>
       <div class="content-inner" id="contentInner"></div>
+    </div>
+
+    <!-- Mixlr webview — shown when Mixlr source tab is active -->
+    <div class="mixlr-pane" id="mixlrPane" style="display:none">
+      <div class="mixlr-pane-header">
+        <span class="mixlr-pane-title">Mixlr</span>
+        <div class="mixlr-stream-indicator" id="mixlrStreamIndicator" style="display:none">
+          <span class="live-badge">&#9679; Routing through EQ</span>
+        </div>
+      </div>
+      <webview
+        id="mixlrWebview"
+        src="https://mixlr.com/"
+        class="mixlr-webview"
+        allowpopups
+      ></webview>
     </div>
 
   </div>

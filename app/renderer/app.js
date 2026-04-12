@@ -19,7 +19,8 @@ import {
   viewSaved, viewHistory, viewBookmarks, viewStats,
   viewTapes, viewSettings,
 } from './views-user.js';
-import { nugsViewVideo } from './views-nugs.js';
+import { nugsViewVideo, viewNugsDashboard } from './views-nugs.js';
+import { initMixlr, showMixlr, hideMixlr } from './mixlr-player.js';
 
 /* ── LFM key — injected from main process ────────── */
 window.ipc?.getLfmKey?.().then(k => { if (k) setLfmKey(k); }).catch(() => {});
@@ -148,6 +149,7 @@ async function init() {
   applyDensity(settings.getKey('density', 'comfortable'));
   applyGlassTheme(settings.getKey('glassTheme', {}));
   initVideoPlayer();
+  initMixlr();
 
   // Resume last position
   const resume = getResume();
@@ -172,15 +174,35 @@ async function init() {
   }
 
   // Sidebar source tabs
+  function activateSource(source) {
+    setSidebarSource(source);
+    document.querySelectorAll('.source-tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.source === source));
+    $('artistSearch').value = '';
+
+    const appBody    = $('appBody');
+    const mixlrPane  = $('mixlrPane');
+    const isMixlr    = source === 'mixlr';
+
+    // Toggle between normal layout and Mixlr fullscreen pane
+    if (appBody)   appBody.classList.toggle('mixlr-active', isMixlr);
+    if (mixlrPane) mixlrPane.style.display = isMixlr ? 'flex' : 'none';
+
+    if (isMixlr) {
+      showMixlr();
+      renderArtists([]);
+    } else {
+      hideMixlr();
+      renderArtists(state.filteredArtists);
+      if (source === 'nugs') {
+        viewNugsDashboard();
+      }
+    }
+  }
+
   document.querySelectorAll('.source-tab').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.source === sidebarSource);
-    btn.addEventListener('click', () => {
-      setSidebarSource(btn.dataset.source);
-      document.querySelectorAll('.source-tab').forEach(b =>
-        b.classList.toggle('active', b.dataset.source === sidebarSource));
-      $('artistSearch').value = '';
-      renderArtists(state.filteredArtists);
-    });
+    btn.addEventListener('click', () => activateSource(btn.dataset.source));
   });
 
   viewWelcome();

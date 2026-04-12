@@ -28,9 +28,10 @@ function createWindow() {
     vibrancy: 'under-window',       // macOS only — no-op on Linux/Windows
     visualEffectState: 'active',    // macOS: keep effect when window is focused
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload:        path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false,
+      nodeIntegration:  false,
+      webviewTag:       true,  // enables <webview> for Mixlr embedding
     },
     title: 'Days Between',
     show: false,
@@ -98,7 +99,13 @@ app.whenReady().then(() => {
   // Nugs.net CORS fix — inject required headers for nugs API/stream requests only
   const { session } = require('electron');
   session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['*://streamapi.nugs.net/*', '*://id.nugs.net/*', '*://subscriptions.nugs.net/*'] },
+    { urls: [
+        '*://streamapi.nugs.net/*',
+        '*://id.nugs.net/*',
+        '*://subscriptions.nugs.net/*',
+        '*://www.nugs.net/*',           // needed for dashboard HTML scraping
+      ]
+    },
     (details, callback) => {
       const url = details.url;
       if (url.includes('bigriver/') || url.includes('bigriver')) {
@@ -148,21 +155,29 @@ app.whenReady().then(() => {
         '*://streamapi.nugs.net/*',
         '*://*.nugs.net/*.m3u8*',
         '*://*.nugs.net/*.ts*',
-        '*://www.nugs.net/images/*',
-        '*://cdn.nugs.net/images/*',
+        '*://www.nugs.net/*',           // HTML pages for dashboard scraper
+        '*://cdn.nugs.net/*',
       ],
     },
     (details, callback) => {
       const headers = { ...details.responseHeaders };
       const url     = details.url;
 
-      if (url.includes('archive.org') || url.includes('nugs.net') && (url.includes('.m3u8') || url.includes('.ts') || url.includes('streamapi'))) {
+      const isStream = url.includes('archive.org') ||
+        (url.includes('nugs.net') && (url.includes('.m3u8') || url.includes('.ts') || url.includes('streamapi')));
+      const isNugsPage = url.includes('www.nugs.net') || url.includes('cdn.nugs.net');
+
+      if (isStream) {
         // Force CORS so MediaElementAudioSource / hls.js can read the stream
         headers['access-control-allow-origin']  = ['*'];
         headers['access-control-allow-methods'] = ['GET, OPTIONS'];
         headers['access-control-allow-headers'] = ['*'];
+      } else if (isNugsPage) {
+        // Nugs HTML pages + image loads — allow CORS so renderer fetch() works
+        headers['access-control-allow-origin']  = ['*'];
+        headers['access-control-allow-headers'] = ['*'];
       } else {
-        // Nugs image loads — allow origin and rewrite CSP
+        // Other image loads — allow origin and rewrite CSP
         headers['access-control-allow-origin']  = ['*'];
         headers['access-control-allow-headers'] = ['*'];
         const existingCsp = (headers['content-security-policy'] ?? [''])[0];
