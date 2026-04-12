@@ -161,3 +161,14 @@ export function resetBands() {
 export function getGains()   { return [..._savedGains]; }
 export function isBypassed() { return _bypass; }
 export function isInited()   { return _inited; }
+
+/**
+ * Connect any HTMLMediaElement (e.g. a live <video>) to the EQ filter chain.
+ * Initialises the AudioContext if it hasn't been already.
+ * Safe to call multiple times for the same element — the internal Set guards
+ * against duplicate createMediaElementSource() calls.
+ */
+export async function connectElement(el) {
+  await initEq(); // idempotent — resolves immediately if already running
+  _connectElement(el);
+}

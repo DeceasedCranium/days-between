@@ -4,6 +4,10 @@ const {
 const path = require('path');
 const cast = require('./cast');
 
+// Must be called before app.whenReady() — enables Chromium's built-in
+// Media Router so Cast devices appear in the system device picker.
+app.commandLine.appendSwitch('enable-features', 'CastMediaRouteProvider');
+
 let win = null;
 let tray = null;
 let isMini = false;
@@ -108,13 +112,42 @@ app.whenReady().then(() => {
     }
   );
 
+  // HLS live-stream interceptor — catches nugs webcasts before the <audio>
+  // element tries to play them natively.  We only block resourceType 'media'
+  // (fired by HTMLMediaElement.src assignment) so hls.js's own XHR fetches
+  // for the same URL are never blocked.  A short-lived Set prevents the rare
+  // case where a redirect also fires a second 'media' request for the same URL.
+  const _handledHls = new Set();
+  session.defaultSession.webRequest.onBeforeRequest(
+    { urls: ['*://*/*master.m3u8*', '*://*/*playlist.m3u8*'] },
+    (details, callback) => {
+      if (
+        details.url.includes('hdntl=') &&
+        details.resourceType === 'media' &&
+        !_handledHls.has(details.url)
+      ) {
+        _handledHls.add(details.url);
+        setTimeout(() => _handledHls.delete(details.url), 60_000);
+        win?.webContents.send('start-live-stream', details.url);
+        callback({ cancel: true });
+      } else {
+        callback({});
+      }
+    }
+  );
+
   // Single onHeadersReceived handler — Electron only allows one at a time.
-  // Covers: archive.org audio (CORS for Web Audio API / EQ) + nugs image loads.
+  // Covers: archive.org audio (CORS for Web Audio API / EQ) + nugs streams
+  // (CORS needed so hls.js + createMediaElementSource can read PCM data) +
+  // nugs image loads.
   session.defaultSession.webRequest.onHeadersReceived(
     {
       urls: [
         '*://archive.org/*',
         '*://*.archive.org/*',
+        '*://streamapi.nugs.net/*',
+        '*://*.nugs.net/*.m3u8*',
+        '*://*.nugs.net/*.ts*',
         '*://www.nugs.net/images/*',
         '*://cdn.nugs.net/images/*',
       ],
@@ -123,10 +156,11 @@ app.whenReady().then(() => {
       const headers = { ...details.responseHeaders };
       const url     = details.url;
 
-      if (url.includes('archive.org')) {
-        // Force CORS headers so MediaElementAudioSource can read the PCM data
+      if (url.includes('archive.org') || url.includes('nugs.net') && (url.includes('.m3u8') || url.includes('.ts') || url.includes('streamapi'))) {
+        // Force CORS so MediaElementAudioSource / hls.js can read the stream
         headers['access-control-allow-origin']  = ['*'];
         headers['access-control-allow-methods'] = ['GET, OPTIONS'];
+        headers['access-control-allow-headers'] = ['*'];
       } else {
         // Nugs image loads — allow origin and rewrite CSP
         headers['access-control-allow-origin']  = ['*'];

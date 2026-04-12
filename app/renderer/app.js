@@ -10,6 +10,7 @@ import {
   syncEq, updateCastUI, player,
 } from './player.js';
 import { applyTheme, applyAccent, applyDensity, applyGlassTheme } from './theme.js';
+import { initVideoPlayer } from './video-player.js';
 import {
   viewWelcome, viewToday, viewTrending, viewRecent,
   renderArtists, navToCurrentArtist, tryRadio,
@@ -146,6 +147,7 @@ async function init() {
   applyAccent(settings.getKey('accent', 'default'));
   applyDensity(settings.getKey('density', 'comfortable'));
   applyGlassTheme(settings.getKey('glassTheme', {}));
+  initVideoPlayer();
 
   // Resume last position
   const resume = getResume();

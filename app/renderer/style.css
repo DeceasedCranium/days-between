@@ -3510,3 +3510,141 @@ html, body {
   flex-wrap: wrap;
   padding: 4px 0 8px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Live Video Panel
+   ═══════════════════════════════════════════════════════════════════ */
+.live-video-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.live-video-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  cursor: pointer;
+}
+.live-video-box {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(900px, 92vw);
+  max-height: 88vh;
+  border-radius: 20px;
+  overflow: hidden;
+  background: hsla(var(--base-hue), var(--base-sat), 7%, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.06),
+    0 32px 64px rgba(0,0,0,0.7),
+    0 12px 24px rgba(0,0,0,0.4);
+}
+
+/* ── Header ──────────────────────────────────────────────────────── */
+.live-video-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: hsla(var(--base-hue), var(--base-sat), 5%, 0.80);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+.live-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #ff4444;
+  text-shadow: 0 0 8px rgba(255,68,68,0.6);
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+.live-video-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.live-video-header-actions {
+  display: flex;
+  gap: 6px;
+}
+.live-video-hbtn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 7px;
+  background: rgba(255,255,255,0.07);
+  color: var(--text2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  transition: background 0.12s, color 0.12s;
+}
+.live-video-hbtn:hover { background: rgba(255,255,255,0.14); color: var(--text); }
+.live-video-hbtn.active { color: var(--accent); }
+
+/* ── Video stage ─────────────────────────────────────────────────── */
+.live-video-stage {
+  flex: 1;
+  background: #000;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#liveVideoEl {
+  width: 100%;
+  height: 100%;
+  max-height: 60vh;
+  display: block;
+  object-fit: contain;
+}
+
+/* ── Controls bar ────────────────────────────────────────────────── */
+.live-video-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: hsla(var(--base-hue), var(--base-sat), 5%, 0.80);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+.live-ctrl-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.07);
+  color: var(--text2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: background 0.12s, color 0.12s;
+  flex-shrink: 0;
+}
+.live-ctrl-btn:hover { background: rgba(255,255,255,0.13); color: var(--text); }
+.live-video-spacer { flex: 1; }
+.live-video-status {
+  font-size: 11px;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
