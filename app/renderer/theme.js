@@ -31,3 +31,16 @@ export function applyAccent(id) {
 export function applyDensity(density) {
   document.documentElement.classList.toggle('density-compact', density === 'compact');
 }
+
+export function applyGlassTheme({ hue, sat, opacity, accentHue } = {}) {
+  const root = document.documentElement;
+  if (hue      != null) root.style.setProperty('--base-hue',      hue);
+  if (sat      != null) root.style.setProperty('--base-sat',      `${sat}%`);
+  if (opacity  != null) root.style.setProperty('--glass-opacity', opacity);
+  if (accentHue != null) {
+    root.style.setProperty('--accent-hue', accentHue);
+    // Clear any inline preset overrides so the hue variable wins
+    root.style.removeProperty('--accent');
+    root.style.removeProperty('--accent2');
+  }
+}

@@ -5,16 +5,25 @@
 }
 
 :root {
-  --bg:        #0e0b12;
-  --bg2:       #130f1a;
-  --bg3:       #1c1628;
-  --bg4:       #261e36;
-  --accent:    #f0952c;
-  --accent2:   #f5b84a;
+  /* ── Theme Customizer knobs (JS writes these at runtime) ─────────── */
+  --base-hue:      220;
+  --base-sat:      15%;
+  --glass-opacity: 0.91;
+  --accent-hue:    33;
+
+  /* ── Derived palette — update automatically when knobs change ────── */
+  --bg:     hsl(var(--base-hue), var(--base-sat), 7%);
+  --bg2:    hsl(var(--base-hue), var(--base-sat), 10%);
+  --bg3:    hsl(var(--base-hue), var(--base-sat), 14%);
+  --bg4:    hsl(var(--base-hue), var(--base-sat), 18%);
+  --border: hsl(var(--base-hue), var(--base-sat), 16%);
+  --accent:  hsl(var(--accent-hue), 80%, 60%);
+  --accent2: hsl(var(--accent-hue), 80%, 70%);
+
+  /* ── Fixed palette ───────────────────────────────────────────────── */
   --text:      #edeaf2;
   --text2:     #9b93b0;
   --text3:     #5e5470;
-  --border:    #241c34;
   --green:     #52c41a;
   --sidebar-w: 264px;
   --player-h:  92px;
@@ -3252,15 +3261,13 @@ html, body {
   font-size: 13.5px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Noticeably transparent — on Wayland the compositor blurs the desktop
-     through; on macOS vibrancy handles it. 0.82 is clearly different from
-     the original fully-opaque dark.                                       */
-  background: rgba(10, 12, 18, 0.91) !important;
+  /* Glass opacity is driven by --glass-opacity (Theme Customizer) */
+  background: hsla(var(--base-hue), var(--base-sat), 7%, var(--glass-opacity)) !important;
 }
 
 /* ── Titlebar — glass ────────────────────────────────────────────── */
 .titlebar {
-  background: rgba(8, 10, 15, 0.82) !important;
+  background: hsla(var(--base-hue), var(--base-sat), 5%, calc(var(--glass-opacity) * 0.90)) !important;
   backdrop-filter: blur(40px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(40px) saturate(180%) !important;
   border-bottom: none !important;
@@ -3271,7 +3278,7 @@ html, body {
 /* ── Sidebar — distinct frosted-glass depth layer ────────────────── */
 .sidebar {
   /* Noticeably lighter than the body so it reads as a separate surface */
-  background: rgba(18, 21, 30, 0.88) !important;
+  background: hsla(var(--base-hue), var(--base-sat), 10%, calc(var(--glass-opacity) * 0.97)) !important;
   backdrop-filter: blur(40px) saturate(160%) !important;
   -webkit-backdrop-filter: blur(40px) saturate(160%) !important;
   border-right: none !important;
@@ -3390,7 +3397,7 @@ html, body {
 .player {
   margin: 0 16px 16px !important;
   border-radius: 16px !important;
-  background: rgba(8, 10, 16, 0.90) !important;
+  background: hsla(var(--base-hue), var(--base-sat), 5%, calc(var(--glass-opacity) * 0.99)) !important;
   backdrop-filter: blur(50px) !important;
   -webkit-backdrop-filter: blur(50px) !important;
   border-top: none !important;
@@ -3409,4 +3416,56 @@ html, body {
 }
 #contentInner.vt-enter {
   animation: 240ms cubic-bezier(0, 0, 0.2, 1) both vt-slide-in;
+}
+
+/* ── Theme Customizer sliders ─────────────────────────────────────── */
+.theme-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 420px;
+}
+.theme-slider-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 48px;
+  align-items: center;
+  gap: 12px;
+}
+.theme-slider-label {
+  font-size: 12px;
+  color: var(--text2);
+  white-space: nowrap;
+}
+.theme-slider-val {
+  font-size: 12px;
+  color: var(--text3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.theme-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.12);
+  outline: none;
+  cursor: pointer;
+}
+.theme-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(0,0,0,0.4);
+  cursor: pointer;
+}
+.theme-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  cursor: pointer;
 }

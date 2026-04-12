@@ -4,7 +4,7 @@ import { state, nav, store, settings, tapes, nugsAuth, nugsArtistStore, nugsRele
 import { nugsApi } from './api.js';
 import { lfm, lastfmArtistImage, getLfmKey } from './lastfm.js';
 import { player, preloadNext } from './player.js';
-import { applyTheme, applyAccent, applyDensity } from './theme.js';
+import { applyTheme, applyAccent, applyDensity, applyGlassTheme } from './theme.js';
 import { initEq, setBand, setBypass, resetBands, getGains, isBypassed, BAND_LABELS } from './eq-engine.js';
 // Circular-safe imports (only used inside function bodies, never at init time)
 import { setBreadcrumb, viewShow, renderArtists } from './views-core.js';
@@ -520,6 +520,11 @@ export function viewSettings() {
   nav.record(viewSettings, []);
   setBreadcrumb([{ label: 'Settings' }]);
   const s = settings.get();
+  const gt = settings.getKey('glassTheme', {});
+  const gtHue       = gt.hue       ?? 220;
+  const gtSat       = gt.sat       ?? 15;
+  const gtOpacity   = gt.opacity   ?? 0.91;
+  const gtAccentHue = gt.accentHue ?? 33;
 
   // Build nugs section content based on auth state
   const nugsSection = nugsAuth.isValid() ? (() => {
@@ -630,6 +635,33 @@ export function viewSettings() {
           <button class="density-btn ${(s.density ?? 'comfortable') === 'compact'     ? 'active' : ''}" data-density="compact">Compact</button>
         </div>
       </div>
+      <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:16px">
+        <div class="settings-row-label">Glass & Color
+          <div class="settings-row-sub">Adjust hue, saturation, and glass opacity in real time</div>
+        </div>
+        <div class="theme-sliders">
+          <div class="theme-slider-row">
+            <span class="theme-slider-label">Base Hue</span>
+            <input type="range" class="theme-slider" id="slBaseHue" min="0" max="360" value="${gtHue}">
+            <span class="theme-slider-val" id="valBaseHue">${gtHue}°</span>
+          </div>
+          <div class="theme-slider-row">
+            <span class="theme-slider-label">Saturation</span>
+            <input type="range" class="theme-slider" id="slBaseSat" min="0" max="100" value="${gtSat}">
+            <span class="theme-slider-val" id="valBaseSat">${gtSat}%</span>
+          </div>
+          <div class="theme-slider-row">
+            <span class="theme-slider-label">Glass Opacity</span>
+            <input type="range" class="theme-slider" id="slGlassOpacity" min="50" max="100" value="${Math.round(gtOpacity * 100)}">
+            <span class="theme-slider-val" id="valGlassOpacity">${Math.round(gtOpacity * 100)}%</span>
+          </div>
+          <div class="theme-slider-row">
+            <span class="theme-slider-label">Accent Hue</span>
+            <input type="range" class="theme-slider" id="slAccentHue" min="0" max="360" value="${gtAccentHue}">
+            <span class="theme-slider-val" id="valAccentHue">${gtAccentHue}°</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="settings-section">
@@ -732,6 +764,22 @@ export function viewSettings() {
       $('densityToggle').querySelectorAll('.density-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
     }));
+  // ── Glass & Color sliders ────────────────────────
+  function syncGlassTheme() {
+    const hue       = parseInt($('slBaseHue').value, 10);
+    const sat       = parseInt($('slBaseSat').value, 10);
+    const opacity   = parseInt($('slGlassOpacity').value, 10) / 100;
+    const accentHue = parseInt($('slAccentHue').value, 10);
+    $('valBaseHue').textContent     = `${hue}°`;
+    $('valBaseSat').textContent     = `${sat}%`;
+    $('valGlassOpacity').textContent = `${Math.round(opacity * 100)}%`;
+    $('valAccentHue').textContent   = `${accentHue}°`;
+    applyGlassTheme({ hue, sat, opacity, accentHue });
+    settings.setKey('glassTheme', { hue, sat, opacity, accentHue });
+  }
+  ['slBaseHue', 'slBaseSat', 'slGlassOpacity', 'slAccentHue'].forEach(id =>
+    $(id).addEventListener('input', syncGlassTheme));
+
   $('toggleNotifications').addEventListener('change', e => settings.setKey('notifications', e.target.checked));
 
   // ── EQ controls ──────────────────────────────────

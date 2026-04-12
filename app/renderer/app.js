@@ -9,7 +9,7 @@ import {
   setPlayerArt, setPlayerSub, setSaveResumeState,
   syncEq, updateCastUI, player,
 } from './player.js';
-import { applyTheme, applyAccent, applyDensity } from './theme.js';
+import { applyTheme, applyAccent, applyDensity, applyGlassTheme } from './theme.js';
 import {
   viewWelcome, viewToday, viewTrending, viewRecent,
   renderArtists, navToCurrentArtist, tryRadio,
@@ -145,6 +145,7 @@ async function init() {
   applyTheme(settings.getKey('theme', 'dark'));
   applyAccent(settings.getKey('accent', 'default'));
   applyDensity(settings.getKey('density', 'comfortable'));
+  applyGlassTheme(settings.getKey('glassTheme', {}));
 
   // Resume last position
   const resume = getResume();
