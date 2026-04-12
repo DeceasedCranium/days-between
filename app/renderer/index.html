@@ -45,29 +45,35 @@
 
     <!-- Sidebar -->
     <div class="sidebar">
-      <div class="source-tabs">
-        <button class="source-tab" data-source="relisten">Relisten</button>
-        <button class="source-tab" data-source="nugs">Nugs</button>
-        <button class="source-tab" data-source="mixlr">Mixlr</button>
-      </div>
-      <div class="sidebar-search">
-        <input id="artistSearch" type="text" placeholder="Search artists…" autocomplete="off" spellcheck="false">
-      </div>
-      <div class="sidebar-nav">
-        <div class="nav-row">
-          <button class="nav-btn active" data-tab="artists">Artists</button>
-          <button class="nav-btn" data-tab="today">Today</button>
-          <button class="nav-btn" data-tab="trending">Trending</button>
-          <button class="nav-btn" data-tab="tapes">Tapes</button>
+      <!-- Static header — always visible, above all webview/overlay layers -->
+      <div class="sidebar-header">
+        <div class="source-tabs">
+          <button class="source-tab" data-source="relisten">Relisten</button>
+          <button class="source-tab" data-source="nugs">Nugs</button>
+          <button class="source-tab" data-source="mixlr">Mixlr</button>
         </div>
-        <div class="nav-row">
-          <button class="nav-btn" data-tab="saved">Saved</button>
-          <button class="nav-btn" data-tab="history">History</button>
-          <button class="nav-btn" data-tab="bookmarks">Bookmarks</button>
-          <button class="nav-btn" data-tab="stats">Stats</button>
+        <div class="sidebar-search">
+          <input id="artistSearch" type="text" placeholder="Search artists…" autocomplete="off" spellcheck="false">
         </div>
-      </div>
+        <div class="sidebar-nav">
+          <div class="nav-row">
+            <button class="nav-btn active" data-tab="artists">Artists</button>
+            <button class="nav-btn" data-tab="today">Today</button>
+            <button class="nav-btn" data-tab="trending">Trending</button>
+            <button class="nav-btn" data-tab="tapes">Tapes</button>
+          </div>
+          <div class="nav-row">
+            <button class="nav-btn" data-tab="saved">Saved</button>
+            <button class="nav-btn" data-tab="history">History</button>
+            <button class="nav-btn" data-tab="bookmarks">Bookmarks</button>
+            <button class="nav-btn" data-tab="stats">Stats</button>
+          </div>
+        </div>
+      </div><!-- /.sidebar-header -->
+      <!-- Dynamic body — populated by renderArtists() -->
       <div class="artist-list" id="artistList"></div>
+      <!-- Pinned footer — Scrape Now button lives here (never scrolls away) -->
+      <div class="sidebar-footer" id="sidebarFooter" style="display:none"></div>
     </div>
 
     <!-- Content -->
@@ -80,6 +86,7 @@
         </div>
       </div>
       <div class="content-inner" id="contentInner"></div>
+      <div class="content-inner" id="nugsContentInner" style="display:none"></div>
     </div>
 
     <!-- Mixlr webview — shown when Mixlr source tab is active -->

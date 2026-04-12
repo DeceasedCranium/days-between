@@ -19,7 +19,7 @@ import {
   viewSaved, viewHistory, viewBookmarks, viewStats,
   viewTapes, viewSettings,
 } from './views-user.js';
-import { nugsViewVideo, viewNugsDashboard } from './views-nugs.js';
+import { nugsViewVideo, viewNugsDashboard, viewNugsWelcome } from './views-nugs.js';
 import { initMixlr, showMixlr, hideMixlr } from './mixlr-player.js';
 
 /* ── LFM key — injected from main process ────────── */
@@ -72,8 +72,18 @@ document.querySelectorAll('.nav-btn').forEach(btn =>
     $('artistSearch').value = '';
     const tab = btn.dataset.tab;
     if (tab === 'artists')   { renderArtists(state.artists); viewWelcome(); }
-    if (tab === 'today')     { renderArtists([]); viewToday(); }
-    if (tab === 'trending')  { renderArtists([]); viewTrending(); }
+    if (tab === 'today') {
+      // Nugs: Live Hub   |  Relisten: On This Day
+      if (sidebarSource === 'nugs') {
+        import('./views-nugs.js').then(m => m.viewNugsDashboard('live'));
+      } else { renderArtists([]); viewToday(); }
+    }
+    if (tab === 'trending') {
+      // Nugs: Recent Streams   |  Relisten: Trending
+      if (sidebarSource === 'nugs') {
+        import('./views-nugs.js').then(m => m.viewNugsDashboard('recent'));
+      } else { renderArtists([]); viewTrending(); }
+    }
     if (tab === 'saved')     { renderArtists([]); viewSaved(); }
     if (tab === 'history')   { renderArtists([]); viewHistory(); }
     if (tab === 'bookmarks') { renderArtists([]); viewBookmarks(); }
@@ -81,12 +91,7 @@ document.querySelectorAll('.nav-btn').forEach(btn =>
     if (tab === 'tapes')     { renderArtists([]); viewTapes(); }
   }));
 
-/* ── Settings button ─────────────────────────────── */
-$('btnSettings').addEventListener('click', () => {
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  renderArtists([]);
-  viewSettings();
-});
+/* ── Settings button — see init() for listener registration ── */
 
 /* ── Radio button ────────────────────────────────── */
 $('btnRadio').addEventListener('click', () => {
@@ -140,9 +145,38 @@ window.ipc?.on('cast-status', status => {
 
 /* ── Boot ────────────────────────────────────────── */
 async function init() {
+  // ── Settings button — wired FIRST, before any async/network work ─────────
+  // Settings must work regardless of which source tab (Relisten/Nugs/Mixlr) is
+  // active. The trick: contentInner is hidden when Nugs is active, and the
+  // entire content column is hidden when Mixlr is active. We always reveal
+  // contentInner before calling viewSettings() so the view has a visible target.
+  $('btnSettings').addEventListener('click', () => {
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    // Ensure the main content pane is visible — source-specific panes step aside
+    $('appBody')?.classList.remove('mixlr-active');
+    const mi = $('mixlrPane');         if (mi) mi.style.display = 'none';
+    const ci = $('contentInner');      if (ci) ci.style.display = '';
+    const ni = $('nugsContentInner');  if (ni) ni.style.display = 'none';
+    renderArtists([]);
+    viewSettings();
+  });
+
+  // ── Diagnostic click logger — identifies what element captures clicks ──────
+  // Useful when debugging overlapping layers (Nugs/Mixlr webview, etc.)
+  // Remove when the click-through issue is fully resolved.
+  document.addEventListener('click', e => {
+    const t = e.target;
+    console.log('[CLICK]', {
+      tag:   t.tagName,
+      id:    t.id       || '(none)',
+      cls:   (t.className && typeof t.className === 'string') ? t.className.slice(0, 60) : '(none)',
+      text:  t.textContent?.trim().slice(0, 40) || '(none)',
+    });
+  }, { capture: true });
+
   // Load all IndexedDB stores into memory before touching any UI
   await loadAll();
-  lfm.load(); // sync read from cache — must follow loadAll()
+  lfm.load();
 
   applyTheme(settings.getKey('theme', 'dark'));
   applyAccent(settings.getKey('accent', 'default'));
@@ -175,28 +209,47 @@ async function init() {
 
   // Sidebar source tabs
   function activateSource(source) {
-    setSidebarSource(source);
-    document.querySelectorAll('.source-tab').forEach(b =>
-      b.classList.toggle('active', b.dataset.source === source));
-    $('artistSearch').value = '';
-
-    const appBody    = $('appBody');
-    const mixlrPane  = $('mixlrPane');
-    const isMixlr    = source === 'mixlr';
-
-    // Toggle between normal layout and Mixlr fullscreen pane
-    if (appBody)   appBody.classList.toggle('mixlr-active', isMixlr);
-    if (mixlrPane) mixlrPane.style.display = isMixlr ? 'flex' : 'none';
-
-    if (isMixlr) {
-      showMixlr();
-      renderArtists([]);
-    } else {
-      hideMixlr();
-      renderArtists(state.filteredArtists);
-      if (source === 'nugs') {
-        viewNugsDashboard();
+    try {
+      setSidebarSource(source);
+      document.querySelectorAll('.source-tab').forEach(b =>
+        b.classList.toggle('active', b.dataset.source === source));
+      const artistSearchEl = $('artistSearch');
+      if (artistSearchEl) {
+        artistSearchEl.value = '';
+        // Update placeholder to reflect which source is active
+        artistSearchEl.placeholder = source === 'nugs' ? 'Search Nugs artists…' : 'Search artists…';
       }
+
+      const appBody          = $('appBody');
+      const mixlrPane        = $('mixlrPane');
+      const contentInner     = $('contentInner');
+      const nugsContentInner = $('nugsContentInner');
+      const isMixlr          = source === 'mixlr';
+      const isNugs           = source === 'nugs';
+
+      if (appBody)   appBody.classList.toggle('mixlr-active', isMixlr);
+      if (mixlrPane) mixlrPane.style.display = isMixlr ? 'flex' : 'none';
+      if (contentInner)     contentInner.style.display     = isNugs ? 'none' : '';
+      if (nugsContentInner) nugsContentInner.style.display = isNugs ? ''     : 'none';
+
+      // Sidebar header MUST stay visible at all times — enforce it here
+      const sh = document.querySelector('.sidebar-header');
+      if (sh) { sh.style.display = ''; sh.style.visibility = ''; sh.style.pointerEvents = ''; }
+
+      if (isMixlr) {
+        showMixlr();
+        renderArtists([]);
+      } else if (isNugs) {
+        hideMixlr();
+        viewNugsWelcome();
+        renderArtists([]);
+      } else {
+        hideMixlr();
+        if (!contentInner?.innerHTML?.trim()) viewWelcome();
+        renderArtists(state.filteredArtists);
+      }
+    } catch (err) {
+      console.error('[activateSource] error:', err);
     }
   }
 
@@ -205,19 +258,28 @@ async function init() {
     btn.addEventListener('click', () => activateSource(btn.dataset.source));
   });
 
+  if (sidebarSource !== 'relisten') activateSource(sidebarSource);
+
   viewWelcome();
   $('artistList').innerHTML = `<div class="loading" style="height:80px"><div class="spinner"></div></div>`;
   try {
     state.artists         = await api.artists();
     state.filteredArtists = state.artists;
-    renderArtists(state.artists);
-    if (resume?.artistSlug) {
-      document.querySelector(`.artist-item[data-slug="${CSS.escape(resume.artistSlug)}"]`)
-        ?.classList.add('now-playing');
+    if (sidebarSource === 'relisten') {
+      renderArtists(state.artists);
+      if (resume?.artistSlug) {
+        document.querySelector(`.artist-item[data-slug="${CSS.escape(resume.artistSlug)}"]`)
+          ?.classList.add('now-playing');
+      }
+    } else if (sidebarSource === 'nugs') {
+      renderArtists([]);
     }
   } catch {
     $('artistList').innerHTML = `<div class="error-state"><p>Failed to load artists</p></div>`;
   }
+
+  // Nugs sidebar shows Favorites instantly from localStorage — no boot scrape needed.
+  // Artists are loaded on-demand when the user clicks a letter in the A-Z grid.
 
   // Nugs token refresh — every 5 min, refresh if within 30 min of expiry
   setInterval(async () => {

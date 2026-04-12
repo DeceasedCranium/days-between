@@ -56,6 +56,9 @@ body {
   padding: 0 8px 0 16px;
   -webkit-app-region: drag;
   border-bottom: 1px solid var(--border);
+  /* Always paint above webview compositing layers and nugs/mixlr panes */
+  position: relative;
+  z-index: 20001;
   flex-shrink: 0;
 }
 .titlebar-left {
@@ -99,6 +102,12 @@ body {
 }
 .titlebar-controls button:hover     { background: var(--bg4); color: var(--text); }
 .btn-close:hover                    { background: var(--accent) !important; color: #fff !important; }
+/* Settings button — always clickable, always above any pane or webview layer */
+#btnSettings {
+  position: relative;
+  z-index: 999999 !important;
+  pointer-events: all !important;
+}
 
 /* ── Layout ────────────────────────────────────── */
 .app-body {
@@ -112,6 +121,10 @@ body {
 }
 
 /* ── Sidebar ───────────────────────────────────── */
+/* Sidebar is a full-height flex column.  The header is a normal block at the
+   top; #artistList takes the remaining space and scrolls independently.
+   This is the only layout that correctly stacks source-tabs → search → nav →
+   artist list without the header ever covering or sliding behind the list.   */
 .sidebar {
   width: var(--sidebar-w);
   flex-shrink: 0;
@@ -119,7 +132,46 @@ body {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  /* Exact height: viewport minus titlebar and player bar — sidebar never
+     overlaps or clips behind either fixed chrome element.             */
+  height: calc(100vh - var(--title-h) - var(--player-h));
   overflow: hidden;
+  position: relative;
+  z-index: 10;
+}
+/* Header: source tabs + search + nav buttons — never scrolls, never hides */
+.sidebar-header {
+  flex-shrink: 0;         /* never shrink, never scroll away */
+  background: var(--bg2);
+  position: relative;
+  z-index: 20000;         /* above webview compositing layers */
+}
+/* Artist list: takes all remaining height and scrolls independently.
+   min-height:0 is the critical flexbox fix that prevents overflow.
+   padding-bottom reserves space so the last artist clears the sticky
+   Scrape Now footer (80 px) plus a little breathing room.             */
+#artistList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-top: 0;
+  padding-bottom: 100px;
+}
+/* Pinned footer — always visible at the bottom of the sidebar regardless
+   of how far the artist list has scrolled.  Uses sticky+flex-shrink:0 so
+   it works in both flex-column and scroll-container contexts.            */
+.sidebar-footer {
+  position: sticky;
+  bottom: 0;
+  flex-shrink: 0;
+  height: 80px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+  z-index: 100;
 }
 .sidebar-search {
   padding: 10px 10px 8px;
@@ -2022,6 +2074,155 @@ html.density-compact .track-title  { font-size: 12px; }
   font-style: italic;
 }
 
+/* ── Nugs sidebar chrome ────────────────────────────────────────── */
+.nugs-live-hub-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 8px 4px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: var(--text1);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s;
+  user-select: none;
+}
+.nugs-live-hub-btn:hover {
+  background: rgba(255,255,255,0.11);
+  border-color: var(--accent);
+}
+.live-hub-dot {
+  color: #e74c3c;
+  font-size: 10px;
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+.nugs-catalog-header {
+  padding: 10px 14px 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text3);
+}
+
+.nugs-catalog-item {
+  /* Same base style as .artist-item — inherits from sidebar rules.
+     Override anything nugs-specific here. */
+  cursor: pointer;
+}
+
+.nugs-scrape-now-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 10px 8px 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px dashed rgba(255,255,255,0.15);
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+  user-select: none;
+}
+.nugs-scrape-now-btn:hover {
+  background: rgba(255,255,255,0.09);
+  color: var(--text1);
+  border-color: rgba(255,255,255,0.28);
+}
+
+/* ── Nugs sidebar tab bar ────────────────────────── */
+.nugs-stab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.nugs-stab {
+  flex: 1;
+  padding: 9px 0 8px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.nugs-stab:hover  { color: var(--text2); }
+.nugs-stab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── Nugs A-Z letter grid ────────────────────────── */
+.nugs-alpha-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 8px 8px 6px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+.nugs-alpha-btn {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text3);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.nugs-alpha-btn:hover  { background: var(--bg3); color: var(--text); border-color: var(--border); }
+.nugs-alpha-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+
+/* ── Nugs per-artist favorite star ───────────────── */
+.nugs-fav-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text3);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+  transition: color 0.12s, background 0.12s;
+  opacity: 0;
+}
+.artist-item:hover .nugs-fav-btn,
+.nugs-fav-btn.active { opacity: 1; }
+.nugs-fav-btn:hover  { background: rgba(255,255,255,0.08); color: var(--accent); }
+.nugs-fav-btn.active { color: var(--accent); }
+
+/* ── Nugs empty state ────────────────────────────── */
+.sidebar-empty-nugs {
+  padding: 20px 14px;
+  font-size: 11px;
+  color: var(--text3);
+  text-align: center;
+  line-height: 1.6;
+}
+
 /* ── Now Playing Overlay ────────────────────────── */
 .npo {
   position: fixed;
@@ -2670,7 +2871,7 @@ body { border-radius: 12px; overflow: hidden; }
   padding: 8px 8px 6px;
   gap: 4px;
   margin-bottom: 0;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;        /* buttons wrap instead of sliding off-screen */
 }
 .sidebar .source-tab {
   flex: 1;
@@ -3408,6 +3609,15 @@ html, body {
     0 8px 16px rgba(0,0,0,0.35) !important;
 }
 
+/* ── Safety: hidden containers must never intercept pointer events ── */
+/* When display:none isn't set (race window during transitions), ensure
+   the off-screen container can't silently swallow clicks. */
+#contentInner[style*="display: none"],
+#nugsContentInner[style*="display: none"] {
+  pointer-events: none !important;
+  visibility: hidden;
+}
+
 /* ── View enter animation for #contentInner ──────────────────────── */
 /* safeInnerHTML() updates the DOM synchronously then adds .vt-enter via rAF.
    The class is removed before the update so re-navigating always re-triggers. */
@@ -3415,7 +3625,8 @@ html, body {
   from { opacity: 0; transform: translateY(14px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-#contentInner.vt-enter {
+#contentInner.vt-enter,
+#nugsContentInner.vt-enter {
   animation: 240ms cubic-bezier(0, 0, 0.2, 1) both vt-slide-in;
 }
 
@@ -3668,6 +3879,29 @@ html, body {
   gap: 4px;
   padding-bottom: 0;
 }
+
+/* Artist search bar — shown only on the Artists tab */
+.nugs-dash-search-wrap {
+  padding: 10px 0 12px;
+}
+.nugs-dash-search {
+  width: 100%;
+  max-width: 360px;
+  padding: 8px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.07);
+  color: var(--text1);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.nugs-dash-search::placeholder { color: var(--text3); }
+.nugs-dash-search:focus {
+  border-color: var(--accent);
+  background: rgba(255,255,255,0.10);
+}
 .nugs-dash-tab {
   padding: 8px 18px;
   border: none;
@@ -3845,3 +4079,4 @@ html, body {
 /* When Mixlr is active, the content column is replaced by the webview */
 .app-body.mixlr-active .content { display: none; }
 .app-body.mixlr-active .mixlr-pane { display: flex !important; }
+

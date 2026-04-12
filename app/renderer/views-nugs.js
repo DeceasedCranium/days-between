@@ -1,6 +1,6 @@
 /* ── views-nugs.js — Nugs.net browsing views ──────────────────── */
 import { $, esc, fmt, artistColor, showToast, shuffle } from './utils.js';
-import { state, nav, nugsAuth, nugsArtistStore, nugsReleasesCache } from './state.js';
+import { state, nav, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
 import { nugsApi } from './api.js';
 import { injectArtistBio, lastfmArtistImage } from './lastfm.js';
 import { nugsResolveAndPlay, handleNugsAuthError, setPlayerArt } from './player.js';
@@ -10,6 +10,26 @@ import { startLiveStream } from './video-player.js';
 // ES module circular imports are safe here — functions are only called
 // inside event handlers and async functions, never at module init time.
 import { setBreadcrumb, fadeIn, renderArtists } from './views-core.js';
+
+/* ── Content container helper ────────────────────── */
+// When the Nugs source tab is active all views must write to #nugsContentInner
+// (which is visible) rather than #contentInner (which is hidden).
+const nugsCI = () =>
+  sidebarSource === 'nugs'
+    ? ($('nugsContentInner') ?? $('contentInner'))
+    : $('contentInner');
+
+/* ── Welcome / landing view ──────────────────────── */
+export function viewNugsWelcome() {
+  const ci = $('nugsContentInner');
+  if (!ci) return;
+  ci.innerHTML = `
+    <div class="welcome">
+      <div class="welcome-logo" style="font-size:40px">🎵</div>
+      <h2>Nugs.net</h2>
+      <p>Choose an artist from the sidebar,<br>or tap <strong>● LIVE HUB</strong> for live webcasts.</p>
+    </div>`;
+}
 
 /* ── Helpers ─────────────────────────────────────── */
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -68,7 +88,7 @@ export async function nugsViewArtist(artist) {
   nav.record(nugsViewArtist, [artist]);
   state.artist = artist;
   setBreadcrumb([{ label: artist.name }]);
-  $('contentInner').innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
+  nugsCI().innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
   try {
     if (!nugsReleasesCache[artist.id]) {
       let all = [], offset = 1, batch;
@@ -145,7 +165,7 @@ export async function nugsViewArtist(artist) {
       renderNugsReleaseRows(applyNugsFilters(allReleases, filters), artist);
     }
 
-    const ci            = $('contentInner');
+    const ci            = nugsCI();
     ci.style.overflow   = 'hidden';
     ci.style.padding    = '0';
     const nugsHeroColor = artistColor(artist.name);
@@ -173,7 +193,7 @@ export async function nugsViewArtist(artist) {
   } catch (e) {
     if (e.message?.includes('nugs:')) { handleNugsAuthError(e); return; }
     console.error('[views-nugs] nugsViewArtist', e);
-    $('contentInner').innerHTML = `<div class="error-state"><p>${esc(e.message)}</p></div>`;
+    nugsCI().innerHTML = `<div class="error-state"><p>${esc(e.message)}</p></div>`;
   }
 }
 
@@ -184,12 +204,15 @@ export async function nugsViewRelease(artist, containerId) {
     { label: artist.name, fn: () => nugsViewArtist(artist) },
     { label: containerId },
   ]);
-  $('contentInner').innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
+  nugsCI().innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
   try {
     const data      = await nugsApi.release(containerId);
     const container = data?.Response ?? data?.response ?? {};
     const tracks    = container.tracks ?? container.Tracks ?? [];
-    const showArtUrl = container.img?.url ? `https://www.nugs.net${container.img.url}` : null;
+    // Image URLs from the API may be relative to www.nugs.net (CDN) or absolute
+    const showArtUrl = container.img?.url
+      ? (container.img.url.startsWith('http') ? container.img.url : `https://www.nugs.net${container.img.url}`)
+      : null;
 
     const displayDate = container.performanceDate ?? containerId;
     const venue       = [container.venueName, container.venueCity].filter(Boolean).join(' — ');
@@ -218,7 +241,7 @@ export async function nugsViewRelease(artist, containerId) {
     }));
 
     const artColor = artistColor(artist.name);
-    $('contentInner').innerHTML = `
+    nugsCI().innerHTML = `
       <div class="show-header" style="--hero-bg:${artColor}">
         <div class="show-header-wrap">
           <div class="show-art" id="nugsShowArt" style="background:${artColor}">
@@ -319,7 +342,7 @@ export async function nugsViewRelease(artist, containerId) {
   } catch (e) {
     if (e.message?.includes('nugs:')) { handleNugsAuthError(e); return; }
     console.error('[views-nugs] nugsViewRelease', e);
-    $('contentInner').innerHTML = `<div class="error-state"><p>${esc(e.message)}</p></div>`;
+    nugsCI().innerHTML = `<div class="error-state"><p>${esc(e.message)}</p></div>`;
   }
 }
 
@@ -332,20 +355,26 @@ export function nugsViewVideo(artist, show, track) {
     { label: track.title },
   ]);
   const url = track.stream_url;
-  $('contentInner').innerHTML = `
+  const titleText    = track.title;
+  const subtitleText = `${artist.name} · ${show?.display_date ?? ''}`;
+  nugsCI().innerHTML = `
     <div class="nugs-video-wrap">
       <video id="nugsVideoEl" class="nugs-video" controls></video>
       <div class="nugs-video-meta">
-        <div class="section-title" style="font-size:14px">${esc(track.title)}</div>
-        <div class="section-subtitle">${esc(artist.name)} · ${esc(show?.display_date ?? '')}</div>
+        <div class="section-title" style="font-size:14px">${esc(titleText)}</div>
+        <div class="section-subtitle">${esc(subtitleText)}</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button class="action-btn" id="btnVideoFS">&#x26F6; Fullscreen</button>
+        <button class="action-btn" id="btnVideoCast">&#x1F4FA; Cast</button>
       </div>
     </div>`;
+
   const vid = $('nugsVideoEl');
+  let vidHls = null;
+
   if (url.includes('.m3u8') && typeof Hls !== 'undefined' && Hls.isSupported()) {
-    const vidHls = new Hls({ enableWorker: false });
+    vidHls = new Hls({ enableWorker: false });
     vidHls.loadSource(url);
     vidHls.attachMedia(vid);
     vidHls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) showToast('Video stream error'); });
@@ -353,11 +382,69 @@ export function nugsViewVideo(artist, show, track) {
     vid.src = url;
   }
   vid.play().catch(() => {});
+
   $('btnVideoFS').addEventListener('click', () => vid.requestFullscreen?.());
   document.addEventListener('fullscreenchange', () => {
     const btn = $('btnVideoFS');
     if (btn) btn.textContent = document.fullscreenElement ? '✕ Exit Fullscreen' : '⛶ Fullscreen';
   }, { once: true });
+
+  // ── Cast button ──────────────────────────────────────────────────
+  let _castActive = false;
+  $('btnVideoCast').addEventListener('click', async () => {
+    if (_castActive) {
+      await window.ipc?.castStop();
+      _castActive = false;
+      $('btnVideoCast').textContent = '📺 Cast';
+      showToast('Cast stopped');
+      vid.muted = false;
+      return;
+    }
+
+    const btn = $('btnVideoCast');
+    btn.style.opacity = '0.5';
+    showToast('Searching for Cast devices…');
+    const res = await window.ipc?.castDiscover();
+    btn.style.opacity = '';
+
+    if (!res?.ok || !res.devices?.length) {
+      showToast('No Cast devices found on this network');
+      return;
+    }
+
+    // Show device picker
+    const list = $('castPickerList');
+    if (!list) return;
+    list.innerHTML = res.devices.map((d, i) =>
+      `<div class="cast-device-item" data-idx="${i}">${esc(d.name)}</div>`
+    ).join('');
+    const picker = $('castPicker');
+    picker.style.display = 'flex';
+
+    list.querySelectorAll('.cast-device-item').forEach(el =>
+      el.addEventListener('click', async () => {
+        picker.style.display = 'none';
+        const device = res.devices[+el.dataset.idx];
+        showToast(`Connecting to ${device.name}…`);
+
+        const conn = await window.ipc?.castConnect(device.host, device.port);
+        if (!conn?.ok) { showToast(`Cast failed: ${conn?.error}`); return; }
+
+        const loadRes = await window.ipc?.castLoad(
+          url,
+          url.includes('.m3u8') ? 'application/x-mpegURL' : 'video/mp4',
+          titleText,
+          ''
+        );
+        if (!loadRes?.ok) { showToast(`Cast load failed: ${loadRes?.error}`); return; }
+
+        _castActive = true;
+        $('btnVideoCast').textContent = '⏹ Stop Cast';
+        showToast(`Casting to ${device.name}`);
+        vid.muted = true;
+      })
+    );
+  });
 }
 
 /* ── Nugs search (used by views-core runSearch) ──── */
@@ -397,11 +484,11 @@ const DASH_TABS = [
 // Per-tab cache so switching tabs doesn't re-fetch
 const _dashCache = {};
 
-export async function viewNugsDashboard() {
-  nav.record(viewNugsDashboard, []);
+export async function viewNugsDashboard(initialTab) {
+  nav.record(viewNugsDashboard, [initialTab]);
   setBreadcrumb([{ label: 'Nugs' }]);
 
-  const ci = $('contentInner');
+  const ci = $('nugsContentInner');
   ci.style.overflow = '';
   ci.style.padding  = '';
 
@@ -436,7 +523,10 @@ export async function viewNugsDashboard() {
 
     // Use cache if available
     if (_dashCache[tabId]) {
-      renderDashCards(body, _dashCache[tabId], tabId);
+      try { renderDashCards(body, _dashCache[tabId], tabId); } catch (renderErr) {
+        console.warn('[nugs-dash] renderDashCards from cache failed:', renderErr);
+        showNugsUnavailable(body, tabId, renderErr);
+      }
       return;
     }
 
@@ -445,24 +535,39 @@ export async function viewNugsDashboard() {
     try {
       const cards = await tab.scrape();
       _dashCache[tabId] = cards;
-      renderDashCards(body, cards, tabId);
+      try {
+        renderDashCards(body, cards, tabId);
+      } catch (renderErr) {
+        console.warn('[nugs-dash] renderDashCards failed:', renderErr);
+        showNugsUnavailable(body, tabId, renderErr);
+      }
     } catch (err) {
-      console.error('[nugs-dash] scrape error', tabId, err);
-      body.innerHTML = `
-        <div class="empty-state" style="padding:40px;text-align:center;color:var(--text3)">
-          <div style="font-size:32px;margin-bottom:12px">📡</div>
-          <div style="font-size:14px;font-weight:600;color:var(--text2);margin-bottom:8px">
-            Couldn't load ${tab.label.replace('●','').trim()}
-          </div>
-          <div style="font-size:12px">
-            ${err.message?.includes('401') || err.message?.includes('403')
-              ? 'Sign in to your Nugs account in Settings to access this section.'
-              : esc(err.message ?? 'Unknown error')}
-          </div>
-          <button class="action-btn" style="margin-top:16px" id="dashRetry">Retry</button>
-        </div>`;
-      $('dashRetry')?.addEventListener('click', () => loadTab(tabId));
+      console.warn('[nugs-dash] scrape error', tabId, err.message);
+      showNugsUnavailable(body, tabId, err);
     }
+  }
+
+  function showNugsUnavailable(body, tabId, err) {
+    const tab = DASH_TABS.find(t => t.id === tabId);
+    const label = tab?.label.replace('●', '').trim() ?? tabId;
+    const is401 = err?.message?.includes('401') || err?.message?.includes('403');
+    const isBusy = err?.message?.includes('busy');
+    const msg = is401
+      ? 'Sign in to your Nugs account in Settings.'
+      : isBusy
+        ? 'The scraper is busy — please wait a moment and retry.'
+        : 'Nugs temporarily unavailable. Check your connection or try again.';
+    if (!body) return;
+    body.innerHTML = `
+      <div class="empty-state" style="padding:40px;text-align:center;color:var(--text3)">
+        <div style="font-size:32px;margin-bottom:12px">📡</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text2);margin-bottom:8px">
+          Couldn't load ${esc(label)}
+        </div>
+        <div style="font-size:12px;margin-bottom:16px">${esc(msg)}</div>
+        <button class="action-btn" id="dashRetry">Retry</button>
+      </div>`;
+    $('dashRetry')?.addEventListener('click', () => loadTab(tabId));
   }
 
   function renderDashCards(container, cards, tabId) {
@@ -478,23 +583,29 @@ export async function viewNugsDashboard() {
     container.innerHTML = `<div class="nugs-dash-grid" id="nugsDashGrid"></div>`;
     const grid = $('nugsDashGrid');
 
-    grid.innerHTML = cards.map((card, idx) => `
+    grid.innerHTML = cards.map((card, idx) => {
+      // Artist cards use { name, imageUrl, linkUrl }
+      // Show/release cards use { title, artist, date, imageUrl, linkUrl, isLive }
+      const displayName = card.name ?? card.title ?? 'Untitled';
+      const initials    = (card.name ?? card.artist ?? card.title ?? '?')[0]?.toUpperCase() ?? '?';
+      return `
       <div class="nugs-dash-card${card.isLive ? ' is-live' : ''}" data-idx="${idx}">
         <div class="nugs-dash-card-art">
           ${card.imageUrl
-            ? `<img src="${esc(card.imageUrl)}" alt="${esc(card.title)}" loading="lazy">`
-            : `<div class="nugs-dash-card-init">${esc((card.artist || card.title)[0]?.toUpperCase() ?? '?')}</div>`}
+            ? `<img src="${esc(card.imageUrl)}" alt="${esc(displayName)}" loading="lazy">`
+            : `<div class="nugs-dash-card-init">${esc(initials)}</div>`}
           ${card.isLive ? `<div class="nugs-dash-live-badge">● LIVE</div>` : ''}
           <div class="nugs-dash-card-overlay">
             <div class="nugs-dash-card-play">▶</div>
           </div>
         </div>
         <div class="nugs-dash-card-info">
-          <div class="nugs-dash-card-title">${esc(card.title)}</div>
+          <div class="nugs-dash-card-title">${esc(displayName)}</div>
           ${card.artist ? `<div class="nugs-dash-card-artist">${esc(card.artist)}</div>` : ''}
           ${card.date   ? `<div class="nugs-dash-card-date">${esc(card.date)}</div>` : ''}
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
     grid.querySelectorAll('.nugs-dash-card').forEach(el => {
       el.addEventListener('click', () => {
@@ -506,53 +617,47 @@ export async function viewNugsDashboard() {
   }
 
   async function handleDashCardClick(card) {
-    // 1. Live shows → try to open as HLS stream
-    if (card.isLive && card.linkUrl) {
-      showToast('Loading live stream…');
-      try {
-        // Fetch the show page to extract the stream URL
-        const r = await fetch(card.linkUrl, { credentials: 'include' });
-        const html = await r.text();
-        const doc  = new DOMParser().parseFromString(html, 'text/html');
+    if (!card.linkUrl) return;
 
-        // Look for a stream URL in script tags / data attributes
-        const scripts = [...doc.querySelectorAll('script')].map(s => s.textContent).join('\n');
-        const m3u8Match = scripts.match(/["'](https?:\/\/[^"']*master\.m3u8[^"']*)/);
-        if (m3u8Match) {
-          startLiveStream(m3u8Match[1], card.title);
-          return;
-        }
-        // If we can't find an m3u8, open the page link in a browser as fallback
-        window.ipc?.openUrl(card.linkUrl);
-      } catch (err) {
-        console.error('[nugs-dash] live click', err);
-        window.ipc?.openUrl(card.linkUrl);
-      }
+    const cid = extractContainerId(card.linkUrl);
+    if (!cid) {
+      showToast('Could not identify this show');
+      console.warn('[nugs-dash] no container ID for:', card.linkUrl);
       return;
     }
 
-    // 2. Recorded content → try to resolve via nugsApi if we have a containerID
-    if (card.linkUrl) {
-      const cid = extractContainerId(card.linkUrl);
-      if (cid) {
-        showToast('Loading…');
-        try {
-          // Build a minimal track object and resolve via the existing nugs pipeline
-          const fakeTrack = {
-            _nugs: true,
-            _nugs_containerId: cid,
-            _nugs_skuId: null,
-            title: card.title,
-          };
-          await nugsResolveAndPlay(fakeTrack, { name: card.artist || 'Nugs' }, null);
-          return;
-        } catch (err) {
-          handleNugsAuthError(err);
-          return;
-        }
-      }
-      // Last resort: open in browser
-      window.ipc?.openUrl(card.linkUrl);
+    showToast('Loading…');
+    try {
+      const data      = await nugsApi.release(cid);
+      const container = data?.Response ?? data?.response ?? {};
+      const skuId     = container.svodskuID && container.svodskuID !== 0
+        ? String(container.svodskuID)
+        : String((container.products ?? [])[0]?.skuID ?? '');
+
+      const videoTrack = {
+        uuid:              `nugs-dash-${cid}`,
+        title:             container.videoTitle || container.performanceDate || card.title || 'Show',
+        duration:          0,
+        stream_url:        null,
+        _nugs:             true,
+        _nugs_video:       true,
+        _nugs_skuId:       skuId,
+        _nugs_containerId: String(cid),
+      };
+      const artist = {
+        name: card.artist || container.artistName || 'Nugs',
+        slug: `nugs-${cid}`,
+        _nugs: true,
+      };
+      const show = {
+        display_date: container.performanceDate ?? '',
+        venue: { name: [container.venueName, container.venueCity].filter(Boolean).join(' — ') },
+        _nugs: true,
+      };
+
+      await nugsResolveAndPlay(videoTrack, artist, show);
+    } catch (err) {
+      handleNugsAuthError(err);
     }
   }
 
@@ -560,6 +665,7 @@ export async function viewNugsDashboard() {
   $('nugsDashTabs').querySelectorAll('.nugs-dash-tab').forEach(btn =>
     btn.addEventListener('click', () => loadTab(btn.dataset.tab)));
 
-  loadTab('live');
+  // initialTab: 'live' | 'recent' | 'stash' — defaults to 'live'
+  loadTab(DASH_TABS.some(t => t.id === initialTab) ? initialTab : 'live');
 }
 

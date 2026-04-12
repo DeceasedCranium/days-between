@@ -17,7 +17,7 @@ export async function wikiArtistData(name) {
     const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(name)}`;
     const r   = await fetch(url, { headers: { 'Accept': 'application/json' } });
     if (!r.ok) {
-      // 404 means no Wikipedia article for this artist — not an error worth logging
+      // Non-200 (404 = no article, 301 = redirect, etc.) — not worth logging
       _wikiCache.set(name, null);
       return null;
     }
@@ -30,8 +30,8 @@ export async function wikiArtistData(name) {
     };
     _wikiCache.set(name, result);
     return result;
-  } catch (err) {
-    console.error('[lastfm] wikiArtistData', err);
+  } catch {
+    // Network error — cache null silently so we don't clutter scraper debugging
     _wikiCache.set(name, null);
     return null;
   }

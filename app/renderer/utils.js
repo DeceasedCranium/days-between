@@ -75,7 +75,7 @@ export function safeInnerHTML(el, html) {
   el.innerHTML = '';
   el.appendChild(t.content);
   // Animate the new content in via CSS (rAF ensures class is added after paint)
-  if (el?.id === 'contentInner') {
+  if (el?.id === 'contentInner' || el?.id === 'nugsContentInner') {
     el.classList.remove('vt-enter');
     requestAnimationFrame(() => el.classList.add('vt-enter'));
   }

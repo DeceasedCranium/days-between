@@ -86,6 +86,8 @@ export const state = {
   originalQueue: [],
   // Stable player state — never cleared by navigation
   playingArtist: null, playingShow: null,
+  // True when scraper detected a login wall (no active session in ghost window)
+  nugsLoginRequired: false,
 };
 
 /* ── Nugs artist list ────────────────────────────── */

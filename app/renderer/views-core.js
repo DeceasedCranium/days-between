@@ -1,7 +1,7 @@
 /* ── views-core.js — Relisten browsing: artists, years, shows, search ── */
 import { $, esc, fmt, stars, artistColor, showToast, shuffle, safeInnerHTML } from './utils.js';
 import { state, store, settings, nav, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
-import { api } from './api.js';
+import { api, nugsApi } from './api.js';
 import { lastfmArtistImage, injectArtistBio, lastfmSimilarArtists } from './lastfm.js';
 import {
   player, queueAndPlay, flatTracks, radioMode, setRadioMode,
@@ -10,6 +10,8 @@ import {
 // Circular-safe: views-nugs imports from views-core, but these are only ever
 // called inside function bodies (event handlers / async calls), never at init.
 import { nugsViewArtist, nugsViewRelease, searchNugsLocal } from './views-nugs.js';
+import { resolveArtistId } from './nugs-scraper.js';
+
 
 /* ── View helpers ────────────────────────────────── */
 export const showLoading = () => {
@@ -40,10 +42,11 @@ const searchToggleEl = $('searchToggle');
 const searchInlineEl = $('searchInline');
 
 export function setBreadcrumb(parts) {
-  // Reset style overrides set by nugs split-view
-  const ci = $('contentInner');
-  ci.style.overflow = '';
-  ci.style.padding  = '';
+  // Reset style overrides on both content containers (nugs views use nugsContentInner)
+  for (const id of ['contentInner', 'nugsContentInner']) {
+    const ci = $(id);
+    if (ci) { ci.style.overflow = ''; ci.style.padding = ''; }
+  }
   // Close companion panel on any page navigation
   $('companionPanel')?.classList.remove('open');
   $('breadcrumb').innerHTML = '';
@@ -196,6 +199,8 @@ export async function viewToday() {
 
 /* ── Welcome ─────────────────────────────────────── */
 export async function viewWelcome() {
+  // Don't write to contentInner when it's hidden (nugs/mixlr source is active)
+  if (sidebarSource !== 'relisten') return;
   nav.record(viewWelcome, []);
   $('breadcrumb').innerHTML = '';
   $('breadcrumb').appendChild(searchToggleEl);
@@ -328,7 +333,11 @@ export async function runSearch(q, yearFrom, yearTo) {
       api.search(q),
       searchNugsLocal(q),
       songSearchPromise,
+      nugsApi.allArtists().catch(() => []), // warms the artist cache silently
     ]);
+
+    // ── Nugs artist search — instant local search against the cached catalog ──
+    const nugsArtistHits = nugsApi.searchArtists(q);
 
     let artists = data.artists ?? [];
     let shows   = data.shows   ?? [];
@@ -346,7 +355,7 @@ export async function runSearch(q, yearFrom, yearTo) {
       .filter(s => (s.name ?? s.title ?? '').toLowerCase().includes(lq))
       .slice(0, 12);
 
-    const total = artists.length + shows.length + venues.length + nugsResults.length + songMatches.length;
+    const total = artists.length + shows.length + venues.length + nugsResults.length + songMatches.length + nugsArtistHits.length;
 
     if (!total) {
       $('contentInner').innerHTML = `<div class="error-state"><p>No results for "${esc(q)}"</p></div>`;
@@ -410,12 +419,26 @@ export async function runSearch(q, yearFrom, yearTo) {
         ${(yearFrom || yearTo) ? `<button class="sr-year-clear" id="srYearClear">Clear</button>` : ''}
       </div>`;
 
+    // Nugs artist row renderer — uses id from nugsApi catalog
+    const renderNugsArtistRow = a => {
+      const color = artistColor(a.name);
+      const init  = esc((a.name[0] ?? '?').toUpperCase());
+      return `<div class="sr-row" data-type="nugs-artist" data-nugs-id="${esc(a.id)}" data-name="${esc(a.name)}">
+        <div class="sr-avatar" style="background:${color}"><span>${init}</span></div>
+        <div class="sr-info">
+          <div class="sr-title">${esc(a.name)}</div>
+          <div class="sr-sub"><span class="badge" style="background:var(--accent)">nugs</span>${a.numShows ? ` · ${a.numShows} shows` : ''}</div>
+        </div>
+      </div>`;
+    };
+
     safeInnerHTML($('contentInner'), `
       <div class="sr-header">
         <div class="sr-query">"${esc(q)}"</div>
         <div class="sr-count">${total} result${total !== 1 ? 's' : ''}</div>
       </div>
       ${yearFilterHtml}
+      ${nugsArtistHits.length ? `<div class="sr-section"><div class="sr-section-title">Nugs Artists</div>${nugsArtistHits.map(renderNugsArtistRow).join('')}</div>` : ''}
       ${artists.length ? `<div class="sr-section"><div class="sr-section-title">Artists</div>${artists.slice(0,8).map(renderArtistRow).join('')}</div>` : ''}
       ${(shows.length || nugsResults.length) ? `
         <div class="sr-section">
@@ -450,7 +473,14 @@ export async function runSearch(q, yearFrom, yearTo) {
 
     $('contentInner').querySelectorAll('.sr-row').forEach(row => {
       row.addEventListener('click', () => {
-        if (row.dataset.type === 'artist') {
+        if (row.dataset.type === 'nugs-artist') {
+          const id   = row.dataset.nugsId ?? '';
+          const name = row.dataset.name ?? '';
+          if (id) {
+            import('./views-nugs.js').then(m =>
+              m.nugsViewArtist({ id, name, slug: `nugs-${id}`, _nugs: true }));
+          }
+        } else if (row.dataset.type === 'artist') {
           const artist = state.artists.find(a => a.slug === row.dataset.slug);
           if (artist) { state.artist = artist; viewYears(artist); }
         } else if (row.dataset.type === 'show') {
@@ -1416,42 +1446,118 @@ export async function viewRecent() {
   } catch(e) { console.error('[views-core] viewRecent', e); showError(e.message); }
 }
 
+/* ── Nugs Pin helpers (localStorage) ────────────────────────────
+   Pinned artist: { id, name }  stored as JSON array.             */
+const NUGS_PINS_KEY = 'nugs_pinned_artists';
+function getNugsPins() {
+  try { return JSON.parse(localStorage.getItem(NUGS_PINS_KEY) ?? '[]'); } catch { return []; }
+}
+function setNugsPins(pins) {
+  localStorage.setItem(NUGS_PINS_KEY, JSON.stringify(pins));
+}
+function isNugsPin(id) {
+  return getNugsPins().some(p => p.id === String(id));
+}
+function toggleNugsPin(artist) {
+  const pins = getNugsPins();
+  const idx  = pins.findIndex(p => p.id === String(artist.id));
+  if (idx >= 0) pins.splice(idx, 1); else pins.push({ id: String(artist.id), name: artist.name });
+  setNugsPins(pins);
+  return idx < 0; // true = now pinned
+}
+
+/* ── Nugs sidebar search state ───────────────────────────────── */
+let _nugsSearchResults  = null;  // null = not searching, Array = results ready
+let _nugsSearchDebounce = null;
+
+/* ── Nugs sidebar row renderer ───────────────────────────────── */
+// Renders artists from nugsApi catalog ({ id, name, numShows })
+// or pinned artists ({ id, name }).  Shows a Pin/Unpin button.
+function renderNugsCatalogRows(artists, showPinBtn = true) {
+  if (!artists.length) return '';
+  return artists.map(a => {
+    const pinned = isNugsPin(a.id);
+    const pinBtn = showPinBtn ? `
+      <button class="nugs-fav-btn ${pinned ? 'active' : ''}"
+              data-nugs-pin-id="${esc(String(a.id))}"
+              data-nugs-pin-name="${esc(a.name)}"
+              title="${pinned ? 'Unpin artist' : 'Pin artist'}">📌</button>` : '';
+    return `
+      <div class="artist-item nugs-catalog-item" data-nugs-id="${esc(String(a.id))}" data-nugs-name="${esc(a.name)}">
+        <div class="artist-avatar" style="background-color:${artistColor(a.name)}">
+          <span>${esc((a.name[0] ?? 'N').toUpperCase())}</span>
+        </div>
+        <span class="artist-name">${esc(a.name)}</span>
+        ${pinBtn}
+      </div>`;
+  }).join('');
+}
+
 /* ── Sidebar ─────────────────────────────────────── */
 export function renderArtists(artists) {
   if (sidebarSource === 'nugs') {
-    if (!nugsAuth.isValid()) {
-      $('artistList').innerHTML = `<div class="sidebar-empty-nugs">Sign in to nugs.net in Settings ⚙</div>`;
-      return;
-    }
-    const q = $('artistSearch').value.toLowerCase().trim();
-    const nugsArtists = nugsArtistStore.get()
-      .filter(a => !q || a.name.toLowerCase().includes(q));
-    if (nugsArtists.length === 0) {
-      $('artistList').innerHTML = `<div class="sidebar-empty-nugs">${q ? 'No matches' : 'Add artists in Settings ⚙'}</div>`;
+    const footer = $('sidebarFooter');
+    if (footer) footer.style.display = 'none';
+
+    const liveHubRow = `
+      <div class="nugs-live-hub-btn" id="nugsLiveHubBtn">
+        <span class="live-hub-dot">●</span>&nbsp;LIVE HUB
+      </div>`;
+
+    let bodyHtml = '';
+
+    if (_nugsSearchResults !== null) {
+      // ── Search results ─────────────────────────────────────────
+      bodyHtml = liveHubRow + (_nugsSearchResults.length
+        ? renderNugsCatalogRows(_nugsSearchResults)
+        : `<div class="sidebar-empty-nugs">No results — try a different name</div>`);
     } else {
-      safeInnerHTML($('artistList'), nugsArtists.map(a => {
-        const count = nugsReleasesCache[a.id]?.length;
-        return `<div class="artist-item nugs-artist-item" data-nugs-id="${esc(a.id)}" data-nugs-slug="${esc(a.slug)}">
-          <div class="artist-avatar" style="background-color:${artistColor(a.name)}">
-            <span>${esc((a.name[0] ?? 'N').toUpperCase())}</span>
-          </div>
-          <span class="artist-name">${esc(a.name)}</span>
-          ${count != null ? `<span class="artist-count">${count}</span>` : ''}
-        </div>`;
-      }).join(''));
+      // ── Pinned artists (default / empty search) ────────────────
+      const pins = getNugsPins();
+      bodyHtml = liveHubRow + (pins.length
+        ? renderNugsCatalogRows(pins)
+        : `<div class="sidebar-empty-nugs">Search above to find artists, then 📌 to pin them here</div>`);
     }
-    setTimeout(enrichArtistAvatars, 0);
-    $('artistList').querySelectorAll('.nugs-artist-item').forEach(item =>
-      item.addEventListener('click', () => {
+
+    safeInnerHTML($('artistList'), bodyHtml);
+
+    // ── Wire Live Hub button ───────────────────────────────────────
+    $('artistList').querySelector('#nugsLiveHubBtn')?.addEventListener('click', () => {
+      document.querySelectorAll('.artist-item').forEach(i => i.classList.remove('active'));
+      import('./views-nugs.js').then(m => m.viewNugsDashboard());
+    });
+
+    // ── Wire 📌 pin/unpin buttons ──────────────────────────────────
+    $('artistList').querySelectorAll('.nugs-fav-btn').forEach(btn =>
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const artist = { id: btn.dataset.nugsPinId, name: btn.dataset.nugsPinName };
+        const nowPinned = toggleNugsPin(artist);
+        btn.classList.toggle('active', nowPinned);
+        btn.title = nowPinned ? 'Unpin artist' : 'Pin artist';
+        // If we're in pinned view (no active search), refresh to reflect removal
+        if (_nugsSearchResults === null) renderArtists([]);
+        showToast(nowPinned ? `📌 ${artist.name} pinned` : `${artist.name} unpinned`);
+      }));
+
+    // ── Wire artist row clicks ─────────────────────────────────────
+    $('artistList').querySelectorAll('.nugs-catalog-item').forEach(item =>
+      item.addEventListener('click', e => {
+        if (e.target.classList.contains('nugs-fav-btn')) return;
         document.querySelectorAll('.artist-item').forEach(i => i.classList.remove('active'));
         item.classList.add('active');
-        const artist = nugsArtistStore.get().find(a => a.slug === item.dataset.nugsSlug);
-        if (artist) nugsViewArtist(artist);
+        const id   = item.dataset.nugsId ?? '';
+        const name = item.dataset.nugsName ?? '';
+        if (id) nugsViewArtist({ id, name, slug: `nugs-${id}`, _nugs: true });
       }));
+
     return;
   }
 
-  // Relisten tab
+  // Relisten / other tabs — hide the Nugs-only footer
+  const footer = $('sidebarFooter');
+  if (footer) footer.style.display = 'none';
+
   const favSlugs = new Set(store.getArtistFavs());
   const sorted   = [...artists].sort((a, b) => {
     const af = favSlugs.has(a.slug), bf = favSlugs.has(b.slug);
@@ -1496,13 +1602,38 @@ export function renderArtists(artists) {
 
 // Artist search input
 $('artistSearch').addEventListener('input', e => {
-  const q = e.target.value.toLowerCase().trim();
+  const q = e.target.value.trim();
+
   if (sidebarSource === 'nugs') {
-    renderArtists(state.filteredArtists);
+    clearTimeout(_nugsSearchDebounce);
+
+    if (!q) {
+      // Empty query — show pinned artists
+      _nugsSearchResults = null;
+      renderArtists([]);
+      return;
+    }
+
+    _nugsSearchDebounce = setTimeout(async () => {
+      try {
+        await nugsApi.allArtists(); // no-op after first call — result is cached
+        const results = nugsApi.searchArtists(q);
+        _nugsSearchResults = results; // Array<{id, name, numShows}>
+      } catch (err) {
+        console.warn('[nugs-sidebar-search]', err);
+        _nugsSearchResults = [];
+      }
+      // Only re-render if the query hasn't changed while we were fetching
+      if (e.target.value.trim() === q) renderArtists([]);
+    }, 300);
+
     return;
   }
-  state.filteredArtists = q
-    ? state.artists.filter(a => a.name.toLowerCase().includes(q))
+
+  // Relisten sidebar — local filter
+  const lq = q.toLowerCase();
+  state.filteredArtists = lq
+    ? state.artists.filter(a => a.name.toLowerCase().includes(lq))
     : state.artists;
   renderArtists(state.filteredArtists);
 });
