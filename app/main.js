@@ -36,10 +36,11 @@ function _destroyGhost() {
 function _ensureGhost() {
   if (_ghostWin && !_ghostWin.isDestroyed()) return _ghostWin;
   _ghostWin = new BrowserWindow({
-    show:   true,           // visible so you can see if a Cloudflare challenge appears
-    width:  1100,
-    height: 700,
-    title:  'Days Between — Nugs Scraper',
+    show:         false,   // fully headless — never surfaces to the user
+    skipTaskbar:  true,    // excluded from OS taskbar/dock
+    width:        1100,
+    height:       700,
+    title:        'Days Between — Nugs Scraper',
     // persist:nugs gives the ghost window its own cookie jar that survives
     // restarts — Cloudflare clearance cookies are retained across sessions.
     // userAgent spoofs a real Linux Chrome so nugs.net doesn't fingerprint us
@@ -176,19 +177,17 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
            4. clears all navigation listeners before resolving
            5. always calls resolve() so the IPC channel is never orphaned   */
       function settle(result) {
-        if (!ghost || ghost.isDestroyed()) {
-          // Window already gone — resolve immediately so the IPC doesn't hang
-          if (!settled) { settled = true; clearTimeout(hardTimer); resolve(result); }
-          return;
-        }
         if (settled) return;
         settled = true;
         clearTimeout(hardTimer);
         try {
-          ghost.webContents.removeListener('dom-ready', onDomReady);
-          ghost.webContents.removeAllListeners('did-navigate');
-          ghost.webContents.removeAllListeners('will-navigate');
+          if (!ghost.isDestroyed()) {
+            ghost.webContents.removeListener('dom-ready', onDomReady);
+            ghost.webContents.removeAllListeners('did-navigate');
+            ghost.webContents.removeAllListeners('will-navigate');
+          }
         } catch { /* webContents may be dying — ignore */ }
+        _destroyGhost();   // free resources on every completion path
         resolve(result);
       }
 
@@ -218,9 +217,9 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
       ghost.webContents.on('will-navigate', (_, navUrl) => {
         if (settled) return;
         if (LOGIN_URL_RE.test(navUrl)) {
-          console.log('[ghost] will-navigate → auth page — suspending scrape:', navUrl);
+          console.warn('[ghost] will-navigate → auth/challenge page — hard timer will expire:', navUrl);
           isAuthenticating = true;
-          armHardTimer(3 * 60 * 1000); // give user 3 min to log in
+          // Ghost is headless — user cannot interact, so let the existing timer expire
         }
       });
 
@@ -232,9 +231,9 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
         if (settled) return;
         const isAuthPage = LOGIN_URL_RE.test(navUrl);
         if (isAuthPage) {
-          console.log('[ghost] did-navigate → login/challenge — extending timeout 3 min:', navUrl);
+          console.warn('[ghost] did-navigate → auth/challenge — hard timer will expire:', navUrl);
           isAuthenticating = true;
-          armHardTimer(3 * 60 * 1000);
+          // Ghost is headless — let the hard timer expire and return an error silently
         } else if (/nugs\.net/.test(navUrl)) {
           console.log('[ghost] did-navigate → nugs content — resuming scrape:', navUrl);
           isAuthenticating = false;
@@ -250,11 +249,10 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
         try { currentUrl = ghost.isDestroyed() ? '' : (ghost.webContents.getURL() ?? ''); }
         catch { return; }
 
-        // Bail immediately on login / challenge pages
+        // Bail immediately on login / challenge pages — ghost is headless, let timer expire
         if (LOGIN_URL_RE.test(currentUrl)) {
-          console.log('[ghost] dom-ready on auth page — waiting for user:', currentUrl);
+          console.warn('[ghost] dom-ready on auth/challenge page — hard timer will expire:', currentUrl);
           isAuthenticating = true;
-          armHardTimer(3 * 60 * 1000);
           return;
         }
         isAuthenticating = false;
