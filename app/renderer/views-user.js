@@ -5,7 +5,7 @@ import { nugsApi } from './api.js';
 import { lfm, lastfmArtistImage, getLfmKey } from './lastfm.js';
 import { player, preloadNext } from './player.js';
 import { applyTheme, applyAccent, applyDensity, applyGlassTheme } from './theme.js';
-import { initEq, setBand, setBypass, resetBands, getGains, isBypassed, BAND_LABELS } from './eq-engine.js';
+import { initEq, setBand, setGains, setBypass, resetBands, getGains, isBypassed, BAND_LABELS } from './eq-engine.js';
 // Circular-safe imports (only used inside function bodies, never at init time)
 import { setBreadcrumb, viewShow, renderArtists } from './views-core.js';
 
@@ -520,11 +520,27 @@ export function viewSettings() {
   nav.record(viewSettings, []);
   setBreadcrumb([{ label: 'Settings' }]);
   const s = settings.get();
+  const GLASS_DEFAULTS = { hue: 220, sat: 15, opacity: 0.91, blur: 12, accentHue: 33 };
+  const GLASS_PRESETS = {
+    midnight: { hue: 220, sat: 25, opacity: 0.88, blur: 20, accentHue: 210 },
+    forest:   { hue: 140, sat: 20, opacity: 0.90, blur: 16, accentHue: 140 },
+    crimson:  { hue: 0,   sat: 25, opacity: 0.88, blur: 14, accentHue: 0   },
+  };
+  const EQ_PRESETS = {
+    flat:     { label: 'Flat',            gains: [0,  0,  0,  0,  0] },
+    aud:      { label: 'AUD / Crowd',     gains: [2, -3,  2, -1, -4] },
+    sbd:      { label: 'SBD Sweetener',   gains: [3,  1,  0,  2,  2] },
+    acoustic: { label: 'Acoustic Clarity',gains: [-2,-1,  3,  2,  0] },
+  };
+
   const gt = settings.getKey('glassTheme', {});
-  const gtHue       = gt.hue       ?? 220;
-  const gtSat       = gt.sat       ?? 15;
-  const gtOpacity   = gt.opacity   ?? 0.91;
-  const gtAccentHue = gt.accentHue ?? 33;
+  const gtHue       = gt.hue       ?? GLASS_DEFAULTS.hue;
+  const gtSat       = gt.sat       ?? GLASS_DEFAULTS.sat;
+  const gtOpacity   = gt.opacity   ?? GLASS_DEFAULTS.opacity;
+  const gtBlur      = gt.blur      ?? GLASS_DEFAULTS.blur;
+  const gtAccentHue = gt.accentHue ?? GLASS_DEFAULTS.accentHue;
+  const gtPreset    = gt.preset    ?? null;
+  const savedEqPreset = settings.getKey('eqPreset', null);
 
   // Build nugs section content based on auth state
   const nugsSection = nugsAuth.isValid() ? (() => {
@@ -637,7 +653,13 @@ export function viewSettings() {
       </div>
       <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:16px">
         <div class="settings-row-label">Glass & Color
-          <div class="settings-row-sub">Adjust hue, saturation, and glass opacity in real time</div>
+          <div class="settings-row-sub">Adjust in real time · presets are a starting point</div>
+        </div>
+        <div class="glass-preset-row">
+          ${Object.entries(GLASS_PRESETS).map(([id, p]) => `
+            <button class="glass-preset-btn ${gtPreset === id ? 'active' : ''}" data-preset="${id}">
+              ${id.charAt(0).toUpperCase() + id.slice(1)}
+            </button>`).join('')}
         </div>
         <div class="theme-sliders">
           <div class="theme-slider-row">
@@ -656,11 +678,17 @@ export function viewSettings() {
             <span class="theme-slider-val" id="valGlassOpacity">${Math.round(gtOpacity * 100)}%</span>
           </div>
           <div class="theme-slider-row">
+            <span class="theme-slider-label">Glass Blur</span>
+            <input type="range" class="theme-slider" id="slGlassBlur" min="0" max="30" value="${gtBlur}">
+            <span class="theme-slider-val" id="valGlassBlur">${gtBlur}px</span>
+          </div>
+          <div class="theme-slider-row">
             <span class="theme-slider-label">Accent Hue</span>
             <input type="range" class="theme-slider" id="slAccentHue" min="0" max="360" value="${gtAccentHue}">
             <span class="theme-slider-val" id="valAccentHue">${gtAccentHue}°</span>
           </div>
         </div>
+        <button class="action-btn" id="btnGlassReset">Reset to Default</button>
       </div>
     </div>
 
@@ -687,6 +715,10 @@ export function viewSettings() {
           <input type="checkbox" id="toggleEq" ${isBypassed() ? '' : 'checked'}>
           <span class="toggle-slider"></span>
         </label>
+      </div>
+      <div class="eq-preset-row">
+        ${Object.entries(EQ_PRESETS).map(([id, p]) => `
+          <button class="eq-preset-btn ${savedEqPreset === id ? 'active' : ''}" data-eq-preset="${id}">${p.label}</button>`).join('')}
       </div>
       <div class="eq-bands" id="eqBands">
         ${BAND_LABELS.map((label, i) => {
@@ -765,20 +797,54 @@ export function viewSettings() {
       btn.classList.add('active');
     }));
   // ── Glass & Color sliders ────────────────────────
-  function syncGlassTheme() {
-    const hue       = parseInt($('slBaseHue').value, 10);
-    const sat       = parseInt($('slBaseSat').value, 10);
-    const opacity   = parseInt($('slGlassOpacity').value, 10) / 100;
-    const accentHue = parseInt($('slAccentHue').value, 10);
-    $('valBaseHue').textContent     = `${hue}°`;
-    $('valBaseSat').textContent     = `${sat}%`;
-    $('valGlassOpacity').textContent = `${Math.round(opacity * 100)}%`;
-    $('valAccentHue').textContent   = `${accentHue}°`;
-    applyGlassTheme({ hue, sat, opacity, accentHue });
-    settings.setKey('glassTheme', { hue, sat, opacity, accentHue });
+  function readSliders() {
+    return {
+      hue:       parseInt($('slBaseHue').value, 10),
+      sat:       parseInt($('slBaseSat').value, 10),
+      opacity:   parseInt($('slGlassOpacity').value, 10) / 100,
+      blur:      parseInt($('slGlassBlur').value, 10),
+      accentHue: parseInt($('slAccentHue').value, 10),
+    };
   }
-  ['slBaseHue', 'slBaseSat', 'slGlassOpacity', 'slAccentHue'].forEach(id =>
-    $(id).addEventListener('input', syncGlassTheme));
+  function writeSliders({ hue, sat, opacity, blur, accentHue }) {
+    $('slBaseHue').value      = hue;
+    $('slBaseSat').value      = sat;
+    $('slGlassOpacity').value = Math.round(opacity * 100);
+    $('slGlassBlur').value    = blur;
+    $('slAccentHue').value    = accentHue;
+    $('valBaseHue').textContent      = `${hue}°`;
+    $('valBaseSat').textContent      = `${sat}%`;
+    $('valGlassOpacity').textContent = `${Math.round(opacity * 100)}%`;
+    $('valGlassBlur').textContent    = `${blur}px`;
+    $('valAccentHue').textContent    = `${accentHue}°`;
+  }
+  function syncGlassTheme(preset = null) {
+    const vals = readSliders();
+    applyGlassTheme(vals);
+    settings.setKey('glassTheme', { ...vals, preset });
+    // Update preset button active state
+    document.querySelectorAll('.glass-preset-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.preset === preset));
+  }
+  ['slBaseHue', 'slBaseSat', 'slGlassOpacity', 'slGlassBlur', 'slAccentHue'].forEach(id =>
+    $(id).addEventListener('input', () => syncGlassTheme(null)));
+
+  // ── Glass preset buttons ─────────────────────────
+  document.querySelectorAll('.glass-preset-btn').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const p = GLASS_PRESETS[btn.dataset.preset];
+      if (!p) return;
+      writeSliders(p);
+      syncGlassTheme(btn.dataset.preset);
+      showToast(`Theme: ${btn.dataset.preset}`);
+    }));
+
+  // ── Reset to Default ─────────────────────────────
+  $('btnGlassReset').addEventListener('click', () => {
+    writeSliders(GLASS_DEFAULTS);
+    syncGlassTheme(null);
+    showToast('Theme reset to default');
+  });
 
   $('toggleNotifications').addEventListener('change', e => settings.setKey('notifications', e.target.checked));
 
@@ -799,12 +865,45 @@ export function viewSettings() {
   });
   $('btnEqReset').addEventListener('click', () => {
     resetBands();
+    settings.setKey('eqPreset', null);
+    document.querySelectorAll('.eq-preset-btn').forEach(b => b.classList.remove('active'));
     $('eqBands').querySelectorAll('.eq-slider').forEach((slider, i) => {
       slider.value = 0;
       const valEl = $(`eqVal${i}`);
       if (valEl) valEl.textContent = '0 dB';
     });
   });
+
+  // ── EQ preset buttons ────────────────────────────
+  function applyEqPreset(gains) {
+    const startGains = getGains();
+    const startTime  = performance.now();
+    const duration   = 300;
+    setGains(gains); // audio ramps immediately via _rampToGains
+    function step(now) {
+      const t    = Math.min((now - startTime) / duration, 1);
+      const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+      $('eqBands').querySelectorAll('.eq-slider').forEach((slider, i) => {
+        const val = startGains[i] + (gains[i] - startGains[i]) * ease;
+        slider.value = val;
+        const valEl = $(`eqVal${i}`);
+        if (valEl) valEl.textContent = `${val >= 0 ? '+' : ''}${val.toFixed(1)} dB`;
+      });
+      if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  document.querySelectorAll('.eq-preset-btn').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.eqPreset;
+      const preset = EQ_PRESETS[id];
+      if (!preset) return;
+      applyEqPreset(preset.gains);
+      settings.setKey('eqPreset', id);
+      document.querySelectorAll('.eq-preset-btn').forEach(b => b.classList.toggle('active', b === btn));
+      showToast(`EQ: ${preset.label}`);
+      if (!isBypassed()) initEq().catch(err => console.error('[settings] initEq:', err));
+    }));
 
   // ── Last.fm controls ─────────────────────────────
   if ($('btnLfmDisconnect')) {

@@ -9,6 +9,7 @@
   --base-hue:      220;
   --base-sat:      15%;
   --glass-opacity: 0.91;
+  --glass-blur:    12px;
   --accent-hue:    33;
 
   /* ── Derived palette — update automatically when knobs change ────── */
@@ -3268,8 +3269,8 @@ html, body {
 /* ── Titlebar — glass ────────────────────────────────────────────── */
 .titlebar {
   background: hsla(var(--base-hue), var(--base-sat), 5%, calc(var(--glass-opacity) * 0.90)) !important;
-  backdrop-filter: blur(40px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(40px) saturate(180%) !important;
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%) !important;
   border-bottom: none !important;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.07) !important;
   border-radius: 0 !important;
@@ -3279,8 +3280,8 @@ html, body {
 .sidebar {
   /* Noticeably lighter than the body so it reads as a separate surface */
   background: hsla(var(--base-hue), var(--base-sat), 10%, calc(var(--glass-opacity) * 0.97)) !important;
-  backdrop-filter: blur(40px) saturate(160%) !important;
-  -webkit-backdrop-filter: blur(40px) saturate(160%) !important;
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%) !important;
   border-right: none !important;
   box-shadow: 1px 0 0 rgba(255, 255, 255, 0.07),
               4px 0 24px rgba(0, 0, 0, 0.4) !important;
@@ -3398,8 +3399,8 @@ html, body {
   margin: 0 16px 16px !important;
   border-radius: 16px !important;
   background: hsla(var(--base-hue), var(--base-sat), 5%, calc(var(--glass-opacity) * 0.99)) !important;
-  backdrop-filter: blur(50px) !important;
-  -webkit-backdrop-filter: blur(50px) !important;
+  backdrop-filter: blur(var(--glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) !important;
   border-top: none !important;
   box-shadow:
     0 0 0 1px rgba(255,255,255,0.08),
@@ -3468,4 +3469,44 @@ html, body {
   border: none;
   background: var(--accent);
   cursor: pointer;
+}
+
+/* ── Glass theme preset buttons ──────────────────────────────────── */
+.glass-preset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.glass-preset-btn,
+.eq-preset-btn {
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+  color: var(--text2);
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.glass-preset-btn:hover,
+.eq-preset-btn:hover {
+  background: rgba(255,255,255,0.11);
+  color: var(--text);
+  border-color: rgba(255,255,255,0.22);
+}
+.glass-preset-btn.active,
+.eq-preset-btn.active {
+  background: rgba(var(--accent-hue, 33), 80%, 60%, 0.18);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── EQ preset row ───────────────────────────────────────────────── */
+.eq-preset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 0 8px;
 }
