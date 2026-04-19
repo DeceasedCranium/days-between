@@ -739,12 +739,13 @@ app.whenReady().then(() => {
 
   // Nugs.net CORS fix — inject required headers for nugs API/stream requests only
   const { session } = require('electron');
+  const nugsSes = session.fromPartition('persist:nugs');
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: [
         '*://streamapi.nugs.net/*',
         '*://id.nugs.net/*',
         '*://subscriptions.nugs.net/*',
-        '*://www.nugs.net/*',           // needed for dashboard HTML scraping
+        '*://www.nugs.net/*',           // dashboard HTML scraping
         '*://*.akamaized.net/*',        // nugs HLS stream segments (hdnea token requires Referer)
       ]
     },
@@ -761,7 +762,6 @@ app.whenReady().then(() => {
       } else if (url.includes('www.nugs.net')) {
         // Dashboard HTML page scraping — send a realistic Chrome browser UA so
         // nugs.net doesn't detect us as a bot and return HTTP 410.
-        // Do NOT override Origin/Referer for these requests.
         details.requestHeaders['User-Agent'] =
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
         details.requestHeaders['Accept'] =
@@ -1058,31 +1058,34 @@ process.on('uncaughtException', err => {
   console.error('[main] uncaught exception:', err);
 });
 
-// Image proxy — fetch image from main process via net.request (bypasses renderer CORS)
-ipcMain.handle('fetch-image', (_, url, bearerToken) => {
-  const { net } = require('electron');
-  return new Promise(resolve => {
-    try {
-      const req = net.request({ url, redirect: 'follow' });
-      req.setHeader('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36');
-      req.setHeader('Referer', 'https://www.nugs.net/');
-      if (bearerToken) req.setHeader('Authorization', `Bearer ${bearerToken}`);
-      req.on('redirect', () => req.followRedirect());
-      req.on('response', res => {
-        if (res.statusCode < 200 || res.statusCode >= 300) { resolve(null); return; }
-        const chunks = [];
-        res.on('data', c => chunks.push(c));
-        res.on('end', () => {
-          const buf = Buffer.concat(chunks);
-          if (buf.length < 500) { resolve(null); return; } // reject placeholder GIFs
-          const mime = [].concat(res.headers['content-type'] ?? [])[0] ?? 'image/jpeg';
-          resolve(`data:${mime};base64,${buf.toString('base64')}`);
-        });
-      });
-      req.on('error', err => { console.error('[fetch-image]', err.message); resolve(null); });
-      req.end();
-    } catch (e) {
-      console.error('[fetch-image] catch:', e.message); resolve(null);
+// Image proxy — fetch via net.fetch using the authenticated nugs session so
+// Cloudflare clearance cookies are present and CDN auth tokens are accepted.
+ipcMain.handle('fetch-image', async (_, url, bearerToken) => {
+  const { net, session } = require('electron');
+  try {
+    const nugsSession = session.fromPartition('persist:nugs');
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Referer':    'https://play.nugs.net/',
+      'Accept':     'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+    };
+    if (bearerToken) headers['Authorization'] = `Bearer ${bearerToken}`;
+
+    const res = await net.fetch(url, { session: nugsSession, headers, redirect: 'follow' });
+    if (!res.ok) {
+      console.warn(`[fetch-image] HTTP ${res.status} for ${url}`);
+      return null;
     }
-  });
+    const buffer = await res.arrayBuffer();
+    if (buffer.byteLength < 500) {
+      console.warn(`[fetch-image] image too small (${buffer.byteLength} bytes) for ${url}`);
+      return null;
+    }
+    const mime = res.headers.get('content-type') || 'image/jpeg';
+    return `data:${mime};base64,${Buffer.from(buffer).toString('base64')}`;
+  } catch (e) {
+    console.error('[fetch-image] catch:', e.message);
+    return null;
+  }
 });
+

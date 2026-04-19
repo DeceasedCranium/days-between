@@ -209,10 +209,17 @@ export async function nugsViewRelease(artist, containerId) {
     const data      = await nugsApi.release(containerId);
     const container = data?.Response ?? data?.response ?? {};
     const tracks    = container.tracks ?? container.Tracks ?? [];
-    // Image URLs from the API may be relative to www.nugs.net (CDN) or absolute
-    const showArtUrl = container.img?.url
-      ? (container.img.url.startsWith('http') ? container.img.url : `https://www.nugs.net${container.img.url}`)
+    // Image URLs from the API are relative paths like /images/shows/foo.jpg.
+    // The actual assets are served by the nugscdn.net CDN, NOT www.nugs.net — so we
+    // must prepend the CDN base instead of www.nugs.net.  Absolute URLs are used as-is.
+    const rawImg     = container.img?.url || container.image || container.imageURL
+                     || container.coverArt || container.pic || null;
+    const showArtUrl = rawImg
+      ? (rawImg.startsWith('http')
+          ? rawImg
+          : `https://assets-01.nugscdn.net/livedownloads${rawImg.startsWith('/') ? rawImg : '/' + rawImg}?h=600`)
       : null;
+    console.log('[Nugs Art Debug]', { rawImg, showArtUrl });
 
     const displayDate = container.performanceDate ?? containerId;
     const venue       = [container.venueName, container.venueCity].filter(Boolean).join(' — ');
@@ -282,20 +289,51 @@ export async function nugsViewRelease(artist, containerId) {
       _containerId: containerId,
     };
 
-    // Load artist image from Last.fm
-    lastfmArtistImage(artist.name).then(imgUrl => {
-      if (!imgUrl) return;
-      artist._wikiImg   = imgUrl;
-      playShow._artData = imgUrl;
-      const artEl = $('nugsShowArt');
-      if (artEl) {
-        const img = new Image();
-        img.alt = '';
-        img.onload = () => { artEl.innerHTML = ''; artEl.appendChild(img); artEl.style.background = ''; };
-        img.src = imgUrl;
-      }
-      if (state.artist?.slug === artist.slug) setPlayerArt(artist, imgUrl, state.show);
-    });
+    const artEl = $('nugsShowArt');
+
+    function fetchLastFmFallback() {
+      lastfmArtistImage(artist.name).then(imgUrl => {
+        if (!imgUrl) return;
+        artist._wikiImg = imgUrl;
+        if (!playShow._artData) playShow._artData = imgUrl;
+        if (artEl && !artEl.querySelector('img')) {
+          const img = new Image();
+          img.alt = artist.name;
+          img.onload = () => { artEl.innerHTML = ''; artEl.appendChild(img); artEl.style.background = ''; };
+          img.src = imgUrl;
+        }
+        if (state.artist?.slug === artist.slug) setPlayerArt(artist, imgUrl, state.show);
+      });
+    }
+
+    if (showArtUrl && artEl) {
+      console.log('[Nugs Art] Loading from CDN:', showArtUrl);
+      const img = document.createElement('img');
+      img.alt             = displayDate || artist.name;
+      img.style.width     = '100%';
+      img.style.height    = '100%';
+      img.style.objectFit = 'cover';
+      img.onload = () => {
+        if (img.naturalWidth < 10) {
+          console.warn('[Nugs Art] Placeholder pixel received — falling back to Last.fm');
+          fetchLastFmFallback();
+          return;
+        }
+        console.log(`[Nugs Art] SUCCESS! ${img.naturalWidth}x${img.naturalHeight}`);
+        artEl.innerHTML = '';
+        artEl.appendChild(img);
+        artEl.style.background = 'transparent';
+        playShow._artData = showArtUrl;
+        lastfmArtistImage(artist.name).then(u => { if (u) artist._wikiImg = u; });
+      };
+      img.onerror = () => {
+        console.error('[Nugs Art] CDN load failed — falling back to Last.fm');
+        fetchLastFmFallback();
+      };
+      img.src = showArtUrl;
+    } else {
+      fetchLastFmFallback();
+    }
 
     $('nugsTrackList').querySelectorAll('.track-row').forEach(row =>
       row.addEventListener('click', () => {
