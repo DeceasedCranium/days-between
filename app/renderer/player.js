@@ -233,7 +233,7 @@ export const player = {
     // which may be either audioEl or preloadEl after a gapless swap.
     const primaryEl = getPrimaryElement();
     if (url.includes('.m3u8') && typeof Hls !== 'undefined' && Hls.isSupported()) {
-      hlsInstance = new Hls({ enableWorker: false });
+      hlsInstance = new Hls({ enableWorker: false, maxBufferLength: 30, maxMaxBufferLength: 60 });
       hlsInstance.loadSource(url);
       hlsInstance.attachMedia(primaryEl); // must use actual DOM element, not proxy
       hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => audio.play().catch(() => {}));

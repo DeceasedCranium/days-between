@@ -88,9 +88,11 @@ async function _startStream(url) {
 
   if (typeof Hls !== 'undefined' && Hls.isSupported()) {
     _hls = new Hls({
-      enableWorker:   true,
-      lowLatencyMode: true,
-      backBufferLength: 60,
+      enableWorker:      true,
+      lowLatencyMode:    true,
+      backBufferLength:  60,
+      maxBufferLength:   30,
+      maxMaxBufferLength: 60,
     });
 
     _hls.loadSource(url);
