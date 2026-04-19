@@ -27,6 +27,9 @@ let _scraping  = false;
 // Performance cache — avoids re-iterating 27 tabs when the catalog hasn't changed
 let _artistCache = null; // { url, count, artists: [...] }  — cleared on each app start
 
+// Timing jitter helper — randomises polling intervals to defeat volumetric bot detection
+const jitter = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
 function _destroyGhost() {
   try { if (_ghostWin && !_ghostWin.isDestroyed()) _ghostWin.destroy(); } catch {}
   _ghostWin = null;
@@ -55,6 +58,22 @@ function _ensureGhost() {
     },
   });
   _ghostWin.on('closed', () => { _ghostWin = null; _scraping = false; });
+
+  // ── Stealth injection — strip Electron/webdriver fingerprints on every navigation
+  // Cloudflare and Demandware check navigator.webdriver before running their challenges.
+  // We patch it out in dom-ready (before page scripts fully execute their checks).
+  _ghostWin.webContents.on('dom-ready', () => {
+    if (!_ghostWin || _ghostWin.isDestroyed()) return;
+    _ghostWin.webContents.executeJavaScript(`
+      try {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        // Restore a minimal chrome object — Electron omits it, another Cloudflare signal
+        if (!window.chrome) {
+          Object.defineProperty(window, 'chrome', { writable: false, value: { runtime: {} } });
+        }
+      } catch(e) {}
+    `).catch(() => {});
+  });
 
   // Diagnostic: log every failed load so we know exactly which URL 404s
   _ghostWin.webContents.on('did-fail-load', (_, errorCode, errorDescription, validatedURL) => {
@@ -127,8 +146,8 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               '[aria-label*="account" i]','[aria-label*="library" i]',
             ].join(',');
             const startMs = Date.now();
-            const poller  = setInterval(async () => {
-              if (warmWin.isDestroyed()) { clearInterval(poller); r(); return; }
+            const poll = async () => {
+              if (warmWin.isDestroyed()) { r(); return; }
               try {
                 const ok = await warmWin.webContents.executeJavaScript(`
                   (function() {
@@ -141,16 +160,17 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                   })()
                 `);
                 if (ok) {
-                  clearInterval(poller);
                   console.log('[ghost] session warm-start: login verified ✓ — proceeding to', url);
                   r();
                 } else if (Date.now() - startMs >= 6000) {
-                  clearInterval(poller);
-                  console.error('[ghost] AUTH FAILED: User token rejected — please sign in to play.nugs.net in the ghost window');
+                  console.error('[ghost] AUTH FAILED: User token rejected — please sign in to play.nugs.net');
                   r(); // non-fatal: let the scrape proceed so the UI can show the auth wall
+                } else {
+                  setTimeout(poll, jitter(300, 600));
                 }
-              } catch { clearInterval(poller); r(); }
-            }, 300);
+              } catch { r(); }
+            };
+            setTimeout(poll, jitter(300, 600));
           });
           warmWin.webContents.loadURL('https://play.nugs.net/home').catch(() => r());
         });
@@ -285,12 +305,11 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
         await new Promise(r => setTimeout(r, 3000));
         if (settled) return;
 
-        // Poll every 500 ms until we see enough content elements.
-        // Stash pages: count show-cards / library items (not artist links).
-        const POLL_INTERVAL = 500;
-        const POLL_MAX      = 10_000;
-        const MIN_FOUND     = isStash ? 3 : 6;
-        let   elapsed       = 0;
+        // Poll until we see enough content elements — interval is randomised each
+        // tick to avoid fixed-cadence volumetric fingerprinting.
+        const POLL_MAX  = 10_000;
+        const MIN_FOUND = isStash ? 3 : 6;
+        let   elapsed   = 0;
 
         while (elapsed < POLL_MAX) {
           if (settled) return;
@@ -301,8 +320,9 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
             continue;
           }
 
-          await new Promise(r => setTimeout(r, POLL_INTERVAL));
-          elapsed += POLL_INTERVAL;
+          const pollMs = jitter(400, 800);
+          await new Promise(r => setTimeout(r, pollMs));
+          elapsed += pollMs;
           if (settled) return;
 
           if (!ghost || ghost.isDestroyed()) {
@@ -397,13 +417,22 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                              document.documentElement.scrollHeight - 10;
                     }
 
-                    var STEP = Math.max(Math.floor(window.innerHeight / 2), 200);
+                    // Base scroll step + random ±60px offset per tick — avoids
+                    // fixed-pixel scroll cadence that bot detectors fingerprint.
+                    function nextStep() {
+                      return Math.max(
+                        Math.floor(window.innerHeight / 2) + Math.floor(Math.random() * 120) - 60,
+                        200
+                      );
+                    }
+                    // In-page jitter helper (mirrors main-process jitter)
+                    function rnd(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
                     var cooldown = false;
 
                     function tick() {
                       harvest();
                       if (isAtBottom()) {
-                        if (cooldown) { setTimeout(tick, 200); return; }
+                        if (cooldown) { setTimeout(tick, rnd(200, 500)); return; }
                         var btn = findLoadMore();
                         if (btn) {
                           console.log('[ghost-stash] clicking Load More — harvested so far:', all.size);
@@ -412,7 +441,7 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                           // Mutation-Watch: wait for DOM to stabilise after click
                           new Promise(function(res) {
                             var debounce = null;
-                            function reset() { clearTimeout(debounce); debounce = setTimeout(res, 500); }
+                            function reset() { clearTimeout(debounce); debounce = setTimeout(res, rnd(400, 700)); }
                             var ob = new MutationObserver(reset);
                             ob.observe(document.body, { childList: true, subtree: true });
                             reset();
@@ -420,8 +449,8 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                           }).then(function() {
                             cooldown = false;
                             harvest();
-                            window.scrollBy(0, STEP);
-                            setTimeout(tick, 200);
+                            window.scrollBy(0, nextStep());
+                            setTimeout(tick, rnd(200, 500));
                           });
                         } else {
                           // At bottom, no Load More — complete
@@ -431,12 +460,12 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                         }
                         return;
                       }
-                      window.scrollBy(0, STEP);
-                      setTimeout(tick, 200);
+                      window.scrollBy(0, nextStep());
+                      setTimeout(tick, rnd(200, 500));
                     }
 
                     window.scrollTo(0, 0);
-                    setTimeout(tick, 500); // initial hydration pause
+                    setTimeout(tick, rnd(400, 700)); // initial hydration pause
                   });
                 })()
               `);
