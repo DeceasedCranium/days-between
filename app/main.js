@@ -24,8 +24,6 @@ let isMini = false;
    ─────────────────────────────────────────────────────────────────────────── */
 let _ghostWin  = null;
 let _scraping  = false;
-// Performance cache — avoids re-iterating 27 tabs when the catalog hasn't changed
-let _artistCache = null; // { url, count, artists: [...] }  — cleared on each app start
 
 // Timing jitter helper — randomises polling intervals to defeat volumetric bot detection
 const jitter = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -111,6 +109,9 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
   if (_scraping) {
     console.warn('[ghost] busy — rejecting:', url);
     return { ok: false, error: 'ghost scraper busy — try again shortly' };
+  }
+  if (!url.startsWith('https://play.nugs.net') && !url.startsWith('https://www.nugs.net')) {
+    return { ok: false, error: 'Invalid domain' };
   }
   _scraping = true;
 
@@ -531,6 +532,9 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
 ipcMain.handle('extract-nugs-stream', async (_, url) => {
   if (!url) return { ok: false, error: 'no URL provided' };
   if (_scraping) return { ok: false, error: 'ghost scraper busy — try again shortly' };
+  if (!url.startsWith('https://play.nugs.net') && !url.startsWith('https://www.nugs.net')) {
+    return { ok: false, error: 'Invalid domain' };
+  }
   _scraping = true;
 
   const PLAY_BASE = 'https://play.nugs.net';
@@ -639,6 +643,7 @@ ipcMain.handle('extract-nugs-stream', async (_, url) => {
       sniffPromise,
       new Promise(r => setTimeout(() => r(null), 8000)),
     ]);
+    _sniffResolve = null; // clear closure if the timeout won the race
 
     if (sniffed) return { ok: true, m3u8: sniffed };
 
@@ -911,7 +916,11 @@ ipcMain.on('player-update', (_, { title }) => {
 });
 
 // ── Shell ─────────────────────────────────────────────────────────────────
-ipcMain.on('open-url', (_, url) => require('electron').shell.openExternal(url));
+ipcMain.on('open-url', (_, url) => {
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    require('electron').shell.openExternal(url);
+  }
+});
 
 // ── Last.fm IPC ───────────────────────────────────────────────────────────
 let _cfg = {};
@@ -1058,34 +1067,4 @@ process.on('uncaughtException', err => {
   console.error('[main] uncaught exception:', err);
 });
 
-// Image proxy — fetch via net.fetch using the authenticated nugs session so
-// Cloudflare clearance cookies are present and CDN auth tokens are accepted.
-ipcMain.handle('fetch-image', async (_, url, bearerToken) => {
-  const { net, session } = require('electron');
-  try {
-    const nugsSession = session.fromPartition('persist:nugs');
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Referer':    'https://play.nugs.net/',
-      'Accept':     'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-    };
-    if (bearerToken) headers['Authorization'] = `Bearer ${bearerToken}`;
-
-    const res = await net.fetch(url, { session: nugsSession, headers, redirect: 'follow' });
-    if (!res.ok) {
-      console.warn(`[fetch-image] HTTP ${res.status} for ${url}`);
-      return null;
-    }
-    const buffer = await res.arrayBuffer();
-    if (buffer.byteLength < 500) {
-      console.warn(`[fetch-image] image too small (${buffer.byteLength} bytes) for ${url}`);
-      return null;
-    }
-    const mime = res.headers.get('content-type') || 'image/jpeg';
-    return `data:${mime};base64,${Buffer.from(buffer).toString('base64')}`;
-  } catch (e) {
-    console.error('[fetch-image] catch:', e.message);
-    return null;
-  }
-});
 

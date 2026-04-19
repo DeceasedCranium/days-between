@@ -412,7 +412,7 @@ export function nugsViewVideo(artist, show, track) {
   let vidHls = null;
 
   if (url.includes('.m3u8') && typeof Hls !== 'undefined' && Hls.isSupported()) {
-    vidHls = new Hls({ enableWorker: false });
+    vidHls = new Hls({ enableWorker: false, maxBufferLength: 30, maxMaxBufferLength: 60 });
     vidHls.loadSource(url);
     vidHls.attachMedia(vid);
     vidHls.on(Hls.Events.ERROR, (_, d) => {

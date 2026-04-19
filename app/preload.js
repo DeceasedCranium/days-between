@@ -4,7 +4,6 @@ contextBridge.exposeInMainWorld('ipc', {
   send:         (channel, data)           => ipcRenderer.send(channel, data),
   on:           (channel, fn)             => ipcRenderer.on(channel, (_, ...args) => fn(...args)),
   off:          (channel)                 => ipcRenderer.removeAllListeners(channel),
-  fetchImage:   (url, bearerToken)        => ipcRenderer.invoke('fetch-image', url, bearerToken),
   castDiscover: ()                        => ipcRenderer.invoke('cast:discover'),
   castConnect:  (host, port)              => ipcRenderer.invoke('cast:connect', { host, port }),
   castLoad:     (url, ct, title, artUrl)  => ipcRenderer.invoke('cast:load', { url, contentType: ct, title, artUrl }),
