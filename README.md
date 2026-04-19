@@ -164,6 +164,7 @@ No telemetry, no accounts, no cloud sync.
 
 | Version | Highlights |
 |---------|-----------|
+| **v1.5.2** | Security hardening: `shell.openExternal` restricted to http/https; ghost scraper domain-gated to nugs.net only; dead `fetch-image` proxy removed; HLS buffer capped at 30/60 s to prevent RAM bloat |
 | **v1.5.1** | Nugs show art now renders correctly — fixed CDN URL construction (`assets-01.nugscdn.net`) that was pointing at the wrong host |
 | **v1.5** | nugs.net Search & Pin sidebar (instant search, localStorage pins); inline HLS video player for livestreams and VOD with Fullscreen + Cast buttons; API-native stream resolution (no ghost browser for playback); audio-only releases auto-route to track list |
 | **v1.4** | Glass UI — transparent window, backdrop-filter blur on sidebar/titlebar/player, Inter typography, floating player bar, 20px-radius cards, CSS enter animation on view swap |
