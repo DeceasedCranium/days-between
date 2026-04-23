@@ -422,9 +422,16 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                         }) || null;
                     }
 
+                    function getScroller() {
+                      return Array.from(document.querySelectorAll('*')).reduce(function(best, el) {
+                        return (el.scrollHeight > el.clientHeight && el.clientHeight > 300 && el.scrollHeight > best.scrollHeight) ? el : best;
+                      }, document.documentElement);
+                    }
+
                     function isAtBottom() {
-                      return window.scrollY + window.innerHeight >=
-                             document.documentElement.scrollHeight - 10;
+                      var s  = getScroller();
+                      var st = s === document.documentElement ? window.scrollY : s.scrollTop;
+                      return st + s.clientHeight >= s.scrollHeight - 10;
                     }
 
                     // Base scroll step + random ±60px offset per tick — avoids
@@ -459,7 +466,9 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                           }).then(function() {
                             cooldown = false;
                             harvest();
-                            window.scrollBy(0, nextStep());
+                            var s = getScroller();
+                            if (s === document.documentElement) window.scrollBy(0, nextStep());
+                            else s.scrollBy(0, nextStep());
                             setTimeout(tick, rnd(200, 500));
                           });
                         } else {
@@ -470,7 +479,9 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                         }
                         return;
                       }
-                      window.scrollBy(0, nextStep());
+                      var s = getScroller();
+                      if (s === document.documentElement) window.scrollBy(0, nextStep());
+                      else s.scrollBy(0, nextStep());
                       setTimeout(tick, rnd(200, 500));
                     }
 
@@ -496,14 +507,19 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               return;
             }
 
-            // Step-scroll to trigger IntersectionObservers for lazy-loaded grids
+            // Deep scroll the internal container to trigger lazy loading
             for (let i = 0; i < 6; i++) {
-              await ghostEval('window.scrollBy(0, window.innerHeight);');
+              await ghostEval(`
+                (function() {
+                  var s = Array.from(document.querySelectorAll('*')).reduce(function(best, el) {
+                    return (el.scrollHeight > el.clientHeight && el.clientHeight > 300 && el.scrollHeight > best.scrollHeight) ? el : best;
+                  }, document.documentElement);
+                  if (s === document.documentElement) window.scrollBy(0, window.innerHeight);
+                  else s.scrollBy(0, s.clientHeight);
+                })()
+              `);
               await new Promise(r => setTimeout(r, 400));
             }
-            // One final jump to the absolute bottom just in case
-            await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
-            await new Promise(r => setTimeout(r, 500));
 
             const html = await ghostEval('document.documentElement.outerHTML');
             settle(html ? { ok: true, html } : { ok: false, error: 'outerHTML empty' });
