@@ -256,69 +256,30 @@ export async function scrapeRecent() {
 
 export async function scrapeStash() {
   // play.nugs.net /library/ is the new My Library hub.
-  // Ghost window does a full scroll+harvest and returns result.stashItems JSON.
-  // We fall through to HTML parse only if stashItems is absent.
+  // The ghost vacuum returns a synthesized HTML block — parse it the same
+  // way as scrapeLive/scrapeRecent via extractStructuralCards.
   const urls = [
     `${BASE}/library/livestreams`, // primary — video/live recordings
     `${BASE}/library/audio`,       // audio recordings
     `${BASE}/library`,             // root library (may redirect)
-    `${WWW_BASE}/stash/`,          // legacy storefront fallback
   ];
 
-  let result = null, lastErr = null;
+  let html = '', lastErr = null;
   for (const url of urls) {
-    try { result = await fetchFull(url); break; }
+    try { html = await fetchPage(url); if (html) break; }
     catch (e) { lastErr = e; }
   }
-  if (!result) throw lastErr ?? new Error('nugs-scraper: stash page not found');
+  if (!html) throw lastErr ?? new Error('nugs-scraper: stash page not found');
 
-  // ── Fast path: ghost returned scroll-harvest JSON ────────────────────
-  if (Array.isArray(result.stashItems) && result.stashItems.length > 0) {
-    console.info(`[nugs-scraper] scrapeStash: ${result.stashItems.length} items from scroll-harvest`);
-    const cards = result.stashItems.map(item => ({
-      title:    item.title || item.artist || 'Show',
-      artist:   item.artist ?? '',
-      date:     item.date   ?? '',
-      venue:    item.venue  ?? '',
-      imageUrl: item.imageUrl ?? '',
-      linkUrl:  item.linkUrl  ? abs(item.linkUrl) : '',
-      isLive:   false,
-    })).filter(c => c.linkUrl);
-    return dedupeByUrl(cards);
-  }
+  const doc     = parseDoc(html);
+  const raw     = extractStructuralCards(doc, false);
+  const results = dedupeByUrl(raw);
 
-  // ── HTML fallback: parse the snapshot ───────────────────────────────
-  const html = result.html ?? '';
-  if (!html) {
-    console.warn('[nugs-scraper] scrapeStash: no stashItems and no HTML snapshot');
-    return [];
-  }
-  const doc = parseDoc(html);
-
-  // ── Parse confirmed .stash-grid-item cards ───────────────────────────
-  const items = [...doc.querySelectorAll('.stash-grid-item')];
-  if (items.length > 0) {
-    console.info(`[nugs-scraper] scrapeStash: ${items.length} .stash-grid-item elements (HTML snapshot)`);
-    const cards = items.map(item => {
-      const title    = item.querySelector('.showtitle-st')?.textContent?.trim()     ?? '';
-      const artist   = item.querySelector('.grid-artist-name')?.textContent?.trim() ?? '';
-      const date     = item.querySelector('.grid-launch-date')?.textContent?.trim() ?? '';
-      const venue    = item.querySelector('.grid-venue')?.textContent?.trim()       ?? '';
-      const img      = item.querySelector('img');
-      const imageUrl = img?.src ?? img?.dataset?.src ?? '';
-      const a        = item.querySelector('a[href]');
-      const linkUrl  = a ? abs(a.getAttribute('href') ?? '') : '';
-      return { title: title || artist, artist, date, venue, imageUrl, linkUrl, isLive: false };
-    }).filter(c => c.linkUrl);
-    return dedupeByUrl(cards);
-  }
-
-  // ── Fallback: generic structural card extractor ──────────────────────
-  console.warn('[nugs-scraper] scrapeStash: no .stash-grid-item found — using generic extractor');
-  const results = dedupeByUrl(extractStructuralCards(doc, false));
   if (!results.length) {
     console.warn('[nugs-scraper] scrapeStash: 0 results. Body HTML (first 6000):');
     console.warn(doc.body?.innerHTML?.slice(0, 6000));
+  } else {
+    console.info(`[nugs-scraper] scrapeStash: ${results.length} unique items (${raw.length} raw)`);
   }
   return results;
 }

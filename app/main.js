@@ -362,12 +362,14 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
           console.log('[ghost] poll', elapsed + 'ms —', (found ?? 0), '(need ' + MIN_FOUND + ')');
 
           if ((found ?? 0) >= MIN_FOUND) {
-            // Start the vacuum to catch virtualized DOM nodes for ALL pages
+            // Start the vacuum to catch virtualized DOM nodes with their containers
             await ghostEval(`
               window._harvestedHtml = new Set();
               window._harvestInterval = setInterval(function() {
                 document.querySelectorAll('a[href*="/watch/"], a[href*="/livestreams/"], a[href*="/p/"], a[href*="/catalog/"], a[href*="/library/"]').forEach(function(a) {
-                  window._harvestedHtml.add(a.outerHTML);
+                  // Capture the full card container so the renderer can identify it
+                  var card = a.closest('li, article, [class*="Item"], [class*="Card"], [class*="Tile"]') || a;
+                  window._harvestedHtml.add(card.outerHTML);
                 });
               }, 200);
             `);
@@ -676,9 +678,9 @@ app.whenReady().then(() => {
       details.requestHeaders['Origin']  = 'https://play.nugs.net';
       details.requestHeaders['Referer'] = 'https://play.nugs.net/';
     } else if (target.includes('akamaized.net') || target.includes('akamaihd.net')) {
-      // Akamai WAF blocks requests that carry a fake Origin/Referer — strip them
+      // Akamai needs Referer for token validation but blocks spoofed Origins
+      details.requestHeaders['Referer'] = 'https://play.nugs.net/';
       delete details.requestHeaders['Origin'];
-      delete details.requestHeaders['Referer'];
     }
 
     callback({ requestHeaders: details.requestHeaders });
