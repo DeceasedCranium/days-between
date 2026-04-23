@@ -496,11 +496,15 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               return;
             }
 
-            // Deep scroll to force React to render lazy-loaded rows
-            for (let i = 0; i < 5; i++) {
-              await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
-              await new Promise(r => setTimeout(r, 600));
+            // Step-scroll to trigger IntersectionObservers for lazy-loaded grids
+            for (let i = 0; i < 6; i++) {
+              await ghostEval('window.scrollBy(0, window.innerHeight);');
+              await new Promise(r => setTimeout(r, 400));
             }
+            // One final jump to the absolute bottom just in case
+            await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
+            await new Promise(r => setTimeout(r, 500));
+
             const html = await ghostEval('document.documentElement.outerHTML');
             settle(html ? { ok: true, html } : { ok: false, error: 'outerHTML empty' });
             return;

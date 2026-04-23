@@ -170,22 +170,34 @@ function extractStructuralCards(doc, isLive) {
     }).filter(c => c.linkUrl && c.linkUrl !== BASE + '/');
   }
 
-  // Fallback: <a> tags that directly wrap or contain an <img>
-  const links = [...doc.querySelectorAll('a[href]')]
-    .filter(a => !a.closest(SKIP) && a.querySelector('img'));
+  // Fallback: <a> tags that directly wrap or contain an <img> or background image
+  const links = [...doc.querySelectorAll('a[href]')].filter(a => {
+    if (a.closest(SKIP)) return false;
+    if (a.querySelector('img')) return true;
+    const styleEl   = a.querySelector('[style*="url"]');
+    const selfStyle = a.getAttribute('style');
+    return styleEl || (selfStyle && selfStyle.includes('url'));
+  });
 
-  return links.map(a => ({
-    title:    (a.getAttribute('title')
-           ?? a.getAttribute('aria-label')
-           ?? extractText(a, TEXT_SELS)
-           ?? a.textContent.trim().slice(0, 80))
-           || 'Show',
-    artist:   '',
-    date:     '',
-    imageUrl: a.querySelector('img')?.src ?? '',
-    linkUrl:  abs(a.getAttribute('href') ?? ''),
-    isLive,
-  })).filter(c => c.linkUrl && c.linkUrl !== BASE + '/');
+  return links.map(a => {
+    let imageUrl = a.querySelector('img')?.src ?? a.querySelector('img')?.dataset?.src ?? '';
+    if (!imageUrl) {
+      const bgEl = a.querySelector('[style*="url"]') ||
+                   (a.getAttribute('style')?.includes('url') ? a : null);
+      const bg   = bgEl ? bgEl.getAttribute('style') : '';
+      const m    = bg.match(/url\(['"]?([^'")]+)['"]?\)/);
+      if (m) imageUrl = abs(m[1]);
+    }
+    return {
+      title:   (a.getAttribute('title') ?? a.getAttribute('aria-label') ??
+                extractText(a, TEXT_SELS) ?? a.textContent.trim().slice(0, 80)) || 'Show',
+      artist:  '',
+      date:    '',
+      imageUrl,
+      linkUrl: abs(a.getAttribute('href') ?? ''),
+      isLive,
+    };
+  }).filter(c => c.linkUrl && c.linkUrl !== BASE + '/');
 }
 
 /* ── Public scrapers ────────────────────────────────────────────── */
