@@ -379,12 +379,23 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                     var all = new Map(); // keyed by relative href slug
 
                     // URL-driven harvest: attach directly to <a> tags before
-                    // React virtualization evicts off-screen DOM nodes
+                    // React virtualization evicts off-screen DOM nodes.
+                    // Uses the same broad URL pattern matching as the fallback
+                    // structural scraper so valid stash items aren't discarded.
                     function harvest() {
-                      document.querySelectorAll('a[href*="/library/"], a[href*="/watch/"]').forEach(function(a) {
+                      document.querySelectorAll('a[href]').forEach(function(a) {
                         var href = a.getAttribute('href') || '';
-                        // Skip generic nav links
-                        if (href.includes('/home') || href.includes('/browse')) return;
+
+                        var isContent = href.includes('/watch/') ||
+                                        href.includes('/library/') ||
+                                        href.includes('/live-download-of') ||
+                                        href.includes('/p/') ||
+                                        href.includes('/livestreams/') ||
+                                        href.includes('/catalog/');
+                        var isNotNav  = !href.includes('/home') &&
+                                        !href.includes('/browse') &&
+                                        !href.includes('/subscribe');
+                        if (!isContent || !isNotNav) return;
 
                         var imgEl    = a.querySelector('img');
                         var imageUrl = imgEl ? (imgEl.src || (imgEl.dataset && imgEl.dataset.src) || '') : '';
@@ -802,11 +813,9 @@ app.whenReady().then(() => {
   const nugsSes = session.fromPartition('persist:nugs');
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: [
-        '*://streamapi.nugs.net/*',
-        '*://id.nugs.net/*',
-        '*://subscriptions.nugs.net/*',
-        '*://www.nugs.net/*',           // dashboard HTML scraping
-        '*://*.akamaized.net/*',        // nugs HLS stream segments (hdnea token requires Referer)
+        '*://*.nugs.net/*',             // covers streamapi/id/subscriptions/www/play/cdn
+        '*://*.nugs.com/*',              // occasional legacy nugs.com endpoints
+        '*://*.akamaized.net/*',         // nugs HLS stream segments (hdnea token requires Referer)
       ]
     },
     (details, callback) => {
