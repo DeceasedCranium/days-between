@@ -366,10 +366,19 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
             await ghostEval(`
               window._harvestedHtml = new Set();
               window._harvestInterval = setInterval(function() {
-                document.querySelectorAll('a[href*="/watch/"], a[href*="/livestreams/"], a[href*="/p/"], a[href*="/catalog/"], a[href*="/library/"]').forEach(function(a) {
-                  // Capture the full card container so the renderer can identify it
-                  var card = a.closest('li, article, [class*="Item"], [class*="Card"], [class*="Tile"]') || a;
-                  window._harvestedHtml.add(card.outerHTML);
+                // Use the same class-based selectors the poll already confirms are present.
+                // URL-pattern matching is fragile when Nugs changes their routing.
+                document.querySelectorAll('[class*="Card"],[class*="Tile"],[class*="Item"],[class*="Stream"]').forEach(function(el) {
+                  if (el.querySelector('img') && !el.closest('nav, header, footer')) {
+                    window._harvestedHtml.add(el.outerHTML);
+                  }
+                });
+                // Fallback: any anchor directly containing an img (catches layouts with no card wrappers)
+                document.querySelectorAll('a[href]').forEach(function(a) {
+                  var href = a.getAttribute('href') || '';
+                  if (href.length > 1 && !href.startsWith('#') && a.querySelector('img') && !a.closest('nav, header, footer')) {
+                    window._harvestedHtml.add(a.outerHTML);
+                  }
                 });
               }, 200);
             `);
@@ -396,10 +405,19 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
             `);
 
             // Stop vacuum and return synthesized HTML block
-            const html = await ghostEval(`
-              clearInterval(window._harvestInterval);
-              '<div id="synthesized-scrape">' + Array.from(window._harvestedHtml).join('') + '</div>';
-            `);
+            const vacSize = await ghostEval('clearInterval(window._harvestInterval); window._harvestedHtml.size');
+            console.log('[ghost] vacuum collected:', vacSize, 'items for', url);
+            if (!vacSize) {
+              const rawDom    = await ghostEval('document.body.innerHTML.substring(0, 6000)');
+              const sampleHrefs = await ghostEval(
+                'JSON.stringify(Array.from(document.querySelectorAll("a[href]")).slice(0,20).map(a=>a.getAttribute("href")))'
+              );
+              console.log('[ghost] RAW DOM (first 6000):', rawDom);
+              console.log('[ghost] sample hrefs:', sampleHrefs);
+            }
+            const html = await ghostEval(
+              '"<div id=\\"synthesized-scrape\\">" + Array.from(window._harvestedHtml).join("") + "</div>"'
+            );
 
             settle(html ? { ok: true, html } : { ok: false, error: 'outerHTML empty' });
             return;

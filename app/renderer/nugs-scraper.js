@@ -132,12 +132,16 @@ function extractStructuralCards(doc, isLive) {
   const ART_SELS  = ['.artist','[class*="artist"]','.performer','.band','.subtitle'];
   const DATE_SELS = ['.date','time','[datetime]','[class*="date"]'];
 
-  // Candidate containers: structural block-level elements with both img/bg & a
+  // Candidate containers: structural block-level elements with both img/bg & a.
+  // Include both lower and upper-case variants to catch React CSS-module hashed
+  // names like _StreamCard_17v41_2 (contains "Card") or _Tile_abc_1 (contains "Tile").
   const candidates = [
     ...doc.querySelectorAll(
-      'li, article, [class*="card"], [class*="item"], ' +
-      '[class*="show"], [class*="event"], [class*="product"], [class*="tile"], ' +
-      '[class*="Tile"], [class*="grid"]'
+      'li, article, ' +
+      '[class*="card"], [class*="Card"], [class*="Stream"], ' +
+      '[class*="item"], [class*="Item"], ' +
+      '[class*="show"], [class*="event"], [class*="product"], ' +
+      '[class*="tile"], [class*="Tile"], [class*="grid"]'
     ),
   ].filter(el =>
     !el.closest(SKIP) &&
@@ -170,18 +174,15 @@ function extractStructuralCards(doc, isLive) {
     }).filter(c => c.linkUrl && c.linkUrl !== BASE + '/');
   }
 
-  // Fallback: extract based on URL pattern rather than visual elements
+  // Fallback: any anchor that visually looks like a card (has an img child).
+  // Deliberately avoid URL-pattern filtering — Nugs changes their routing and
+  // any hardcoded path prefix will eventually break.
   const links = [...doc.querySelectorAll('a[href]')].filter(a => {
     if (a.closest(SKIP)) return false;
     const href = a.getAttribute('href') || '';
-    // Only keep links that point to catalog items, videos, or library items
-    const isContent = href.includes('/watch/') || href.includes('/library/') ||
-                      href.includes('/live-download-of') || href.includes('/p/') ||
-                      href.includes('/livestreams/') || href.includes('/catalog/');
-    // Reject generic nav links
-    const isNotNav  = !href.includes('/home') && !href.includes('/browse') &&
-                      !href.includes('/subscribe');
-    return isContent && isNotNav;
+    if (href.length < 2 || href.startsWith('#')) return false;
+    // Must contain an image — that's what distinguishes a content card from a nav link
+    return !!a.querySelector('img');
   });
 
   return links.map(a => {
