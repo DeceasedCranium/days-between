@@ -1,6 +1,6 @@
 # Maintainer: local
 pkgname=days-between
-pkgver=1.5.5
+pkgver=1.5.4
 pkgrel=1
 pkgdesc="Days Between — Live music streaming desktop app, powered by Relisten (70,000+ concerts)"
 arch=('any')
