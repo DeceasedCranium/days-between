@@ -362,187 +362,35 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
           console.log('[ghost] poll', elapsed + 'ms —', (found ?? 0), '(need ' + MIN_FOUND + ')');
 
           if ((found ?? 0) >= MIN_FOUND) {
-            if (isStash) {
-              // ── Stash Scroll & Harvest ───────────────────────────────────
-              // Same virtualised-DOM approach as the artist A-Z engine.
-              // Scroll top→bottom in half-viewport steps, harvesting every
-              // .stash-grid-item into a Map on each tick.  At the bottom, click
-              // Load More if present and repeat; stop when no button and at bottom.
-              // Returns JSON so the parser can use a fast path (no HTML snapshot).
-              armHardTimer(120_000);
-              console.log('[ghost] stash: starting scroll+harvest');
-
-              const stashJson = await ghostEval(`
-                (function() {
-                  var PLAY_BASE = 'https://play.nugs.net';
-                  return new Promise(function(resolve) {
-                    var all = new Map(); // keyed by relative href slug
-                    var bottomRetries = 0;
-                    // Vacuum: harvest every 200ms during scroll so we catch
-                    // virtualized stash cards before React evicts them.
-                    var stashHarvestInterval = setInterval(harvest, 200);
-
-                    // URL-driven harvest: attach directly to <a> tags before
-                    // React virtualization evicts off-screen DOM nodes.
-                    // Uses the same broad URL pattern matching as the fallback
-                    // structural scraper so valid stash items aren't discarded.
-                    function harvest() {
-                      document.querySelectorAll('a[href]').forEach(function(a) {
-                        var href = a.getAttribute('href') || '';
-
-                        var isContent = href.includes('/watch/') ||
-                                        href.includes('/library/') ||
-                                        href.includes('/live-download-of') ||
-                                        href.includes('/p/') ||
-                                        href.includes('/livestreams/') ||
-                                        href.includes('/catalog/');
-                        var isNotNav  = !href.includes('/home') &&
-                                        !href.includes('/browse') &&
-                                        !href.includes('/subscribe');
-                        if (!isContent || !isNotNav) return;
-
-                        var imgEl    = a.querySelector('img');
-                        var imageUrl = imgEl ? (imgEl.src || (imgEl.dataset && imgEl.dataset.src) || '') : '';
-                        if (!imageUrl) {
-                          var bgEl = a.querySelector('[style*="url"]') ||
-                                     (a.getAttribute('style') && a.getAttribute('style').indexOf('url') !== -1 ? a : null);
-                          if (bgEl) {
-                            var m = bgEl.getAttribute('style').match(/url\(['"]?([^'"]+)['"]?\)/);
-                            if (m) imageUrl = m[1];
-                          }
-                        }
-
-                        var title = a.getAttribute('title') || a.getAttribute('aria-label') || a.innerText || '';
-                        title = title.replace(/Play|Watch|Add to Stash|Load More/ig, '').replace(/\n/g, ' ').trim();
-
-                        if (title.length > 2 && href) {
-                          var key = href.split('?')[0];
-                          all.set(key, { linkUrl: href, title: title, imageUrl: imageUrl });
-                        }
-                      });
-                    }
-
-                    function findLoadMore() {
-                      return Array.from(document.querySelectorAll('button,a[role="button"],a'))
-                        .find(function(el) {
-                          var t = (el.textContent || '').trim().toLowerCase();
-                          return t === 'load more' || t === 'view more' || t.startsWith('load more');
-                        }) || null;
-                    }
-
-                    function getScroller() {
-                      return Array.from(document.querySelectorAll('*')).reduce(function(best, el) {
-                        return (el.scrollHeight > el.clientHeight && el.clientHeight > 300 && el.scrollHeight > best.scrollHeight) ? el : best;
-                      }, document.documentElement);
-                    }
-
-                    function isAtBottom() {
-                      var s  = getScroller();
-                      var st = s === document.documentElement ? window.scrollY : s.scrollTop;
-                      return st + s.clientHeight >= s.scrollHeight - 10;
-                    }
-
-                    // Base scroll step + random ±60px offset per tick — avoids
-                    // fixed-pixel scroll cadence that bot detectors fingerprint.
-                    function nextStep() {
-                      return Math.max(
-                        Math.floor(window.innerHeight / 2) + Math.floor(Math.random() * 120) - 60,
-                        200
-                      );
-                    }
-                    // In-page jitter helper (mirrors main-process jitter)
-                    function rnd(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-
-                    function tick() {
-                      harvest();
-                      var s = getScroller();
-
-                      if (isAtBottom()) {
-                        var btn = findLoadMore();
-                        if (btn) {
-                          btn.click();
-                          bottomRetries = 0;
-                          setTimeout(tick, 1500); // wait for click to render
-                          return;
-                        }
-
-                        // Nudge + wait for infinite-scroll network fetch (max 4 retries)
-                        if (bottomRetries < 4) {
-                          bottomRetries++;
-                          if (s === document.documentElement) window.scrollBy(0, -20);
-                          else s.scrollBy(0, -20);
-                          setTimeout(function() {
-                            if (s === document.documentElement) window.scrollBy(0, 40);
-                            else s.scrollBy(0, 40);
-                            setTimeout(tick, 800); // 800ms for network response
-                          }, 100);
-                          return;
-                        }
-
-                        // Retries exhausted — stop vacuum, final harvest, finish
-                        clearInterval(stashHarvestInterval);
-                        harvest();
-                        console.log('[ghost-stash] harvest complete:', all.size, 'items');
-                        resolve(JSON.stringify(Array.from(all.values())));
-                        return;
-                      }
-
-                      // Not at bottom — keep scrolling
-                      bottomRetries = 0;
-                      if (s === document.documentElement) window.scrollBy(0, nextStep());
-                      else s.scrollBy(0, nextStep());
-                      setTimeout(tick, rnd(200, 500));
-                    }
-
-                    window.scrollTo(0, 0);
-                    setTimeout(tick, rnd(400, 700)); // initial hydration pause
-                  });
-                })()
-              `);
-
-              if (settled) return;
-              let stashItems = null;
-              try { if (stashJson) stashItems = JSON.parse(stashJson); }
-              catch (e) { console.warn('[ghost] stash JSON parse failed:', e.message); }
-
-              if (stashItems?.length > 0) {
-                console.log(`[ghost] stash harvest: ${stashItems.length} items`);
-                settle({ ok: true, html: '', stashItems });
-              } else {
-                console.warn('[ghost] stash scroll+harvest got 0 items — falling back to HTML');
-                const snapHtml = await ghostEval('document.documentElement.outerHTML');
-                settle(snapHtml ? { ok: true, html: snapHtml } : { ok: false, error: 'stash harvest failed' });
-              }
-              return;
-            }
-
-            // Start vacuum — continuously collect <a> outerHTML before React
-            // virtualization destroys off-screen nodes
+            // Start the vacuum to catch virtualized DOM nodes for ALL pages
             await ghostEval(`
               window._harvestedHtml = new Set();
               window._harvestInterval = setInterval(function() {
-                document.querySelectorAll(
-                  'a[href*="/watch/"], a[href*="/livestreams/"], a[href*="/p/"], a[href*="/catalog/"]'
-                ).forEach(function(a) {
+                document.querySelectorAll('a[href*="/watch/"], a[href*="/livestreams/"], a[href*="/p/"], a[href*="/catalog/"], a[href*="/library/"]').forEach(function(a) {
                   window._harvestedHtml.add(a.outerHTML);
                 });
               }, 200);
             `);
 
-            // Sweep-scroll to surface all rows past IntersectionObservers
+            // Sweep-scroll the page to trigger React lazy loading
             await ghostEval(`
-              new Promise(function(resolve) {
+              return new Promise(function(resolve) {
                 var scrolls = 0;
                 var timer = setInterval(function() {
                   var s = Array.from(document.querySelectorAll('*')).reduce(function(best, el) {
                     return (el.scrollHeight > el.clientHeight && el.clientHeight > 300 && el.scrollHeight > best.scrollHeight) ? el : best;
                   }, document.documentElement);
+
                   if (s === document.documentElement) window.scrollBy(0, window.innerHeight / 2);
                   else s.scrollBy(0, s.clientHeight / 2);
+
                   scrolls++;
-                  if (scrolls >= 14) { clearInterval(timer); resolve(); }
+                  if (scrolls >= 14) {
+                    clearInterval(timer);
+                    resolve();
+                  }
                 }, 400);
-              })
+              });
             `);
 
             // Stop vacuum and return synthesized HTML block
@@ -550,6 +398,7 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               clearInterval(window._harvestInterval);
               '<div id="synthesized-scrape">' + Array.from(window._harvestedHtml).join('') + '</div>';
             `);
+
             settle(html ? { ok: true, html } : { ok: false, error: 'outerHTML empty' });
             return;
           }
@@ -818,17 +667,20 @@ app.whenReady().then(() => {
   const { session } = require('electron');
   const spoofHeaders = (details, callback) => {
     const target = details.url.toLowerCase();
-    if (
-      target.includes('nugs.net') ||
-      target.includes('nugs.com') ||
-      target.includes('akamaized.net') ||
-      target.includes('akamaihd.net')
-    ) {
-      details.requestHeaders['Origin']     = 'https://play.nugs.net';
-      details.requestHeaders['Referer']    = 'https://play.nugs.net/';
-      details.requestHeaders['User-Agent'] =
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+    // Force UA to exactly match the Chrome 124 token fingerprint on every request
+    details.requestHeaders['User-Agent'] =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+    if (target.includes('nugs.net') || target.includes('nugs.com')) {
+      details.requestHeaders['Origin']  = 'https://play.nugs.net';
+      details.requestHeaders['Referer'] = 'https://play.nugs.net/';
+    } else if (target.includes('akamaized.net') || target.includes('akamaihd.net')) {
+      // Akamai WAF blocks requests that carry a fake Origin/Referer — strip them
+      delete details.requestHeaders['Origin'];
+      delete details.requestHeaders['Referer'];
     }
+
     callback({ requestHeaders: details.requestHeaders });
   };
 
