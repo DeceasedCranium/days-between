@@ -176,7 +176,8 @@ function extractStructuralCards(doc, isLive) {
     const href = a.getAttribute('href') || '';
     // Only keep links that point to catalog items, videos, or library items
     const isContent = href.includes('/watch/') || href.includes('/library/') ||
-                      href.includes('/live-download-of') || href.includes('/p/');
+                      href.includes('/live-download-of') || href.includes('/p/') ||
+                      href.includes('/livestreams/') || href.includes('/catalog/');
     // Reject generic nav links
     const isNotNav  = !href.includes('/home') && !href.includes('/browse') &&
                       !href.includes('/subscribe');

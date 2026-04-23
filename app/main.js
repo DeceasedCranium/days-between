@@ -444,42 +444,43 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                     }
                     // In-page jitter helper (mirrors main-process jitter)
                     function rnd(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-                    var cooldown = false;
+                    var bottomRetries = 0;
 
                     function tick() {
                       harvest();
+                      var s = getScroller();
+
                       if (isAtBottom()) {
-                        if (cooldown) { setTimeout(tick, rnd(200, 500)); return; }
                         var btn = findLoadMore();
                         if (btn) {
-                          console.log('[ghost-stash] clicking Load More — harvested so far:', all.size);
                           btn.click();
-                          cooldown = true;
-                          // Mutation-Watch: wait for DOM to stabilise after click
-                          new Promise(function(res) {
-                            var debounce = null;
-                            function reset() { clearTimeout(debounce); debounce = setTimeout(res, rnd(400, 700)); }
-                            var ob = new MutationObserver(reset);
-                            ob.observe(document.body, { childList: true, subtree: true });
-                            reset();
-                            setTimeout(function() { ob.disconnect(); clearTimeout(debounce); res(); }, 2000);
-                          }).then(function() {
-                            cooldown = false;
-                            harvest();
-                            var s = getScroller();
-                            if (s === document.documentElement) window.scrollBy(0, nextStep());
-                            else s.scrollBy(0, nextStep());
-                            setTimeout(tick, rnd(200, 500));
-                          });
-                        } else {
-                          // At bottom, no Load More — complete
-                          harvest();
-                          console.log('[ghost-stash] harvest complete:', all.size, 'items');
-                          resolve(JSON.stringify(Array.from(all.values())));
+                          bottomRetries = 0;
+                          setTimeout(tick, 1500); // wait for click to render
+                          return;
                         }
+
+                        // Nudge + wait for infinite-scroll network fetch (max 4 retries)
+                        if (bottomRetries < 4) {
+                          bottomRetries++;
+                          if (s === document.documentElement) window.scrollBy(0, -20);
+                          else s.scrollBy(0, -20);
+                          setTimeout(function() {
+                            if (s === document.documentElement) window.scrollBy(0, 40);
+                            else s.scrollBy(0, 40);
+                            setTimeout(tick, 800); // 800ms for network response
+                          }, 100);
+                          return;
+                        }
+
+                        // Retries exhausted — harvest and finish
+                        harvest();
+                        console.log('[ghost-stash] harvest complete:', all.size, 'items');
+                        resolve(JSON.stringify(Array.from(all.values())));
                         return;
                       }
-                      var s = getScroller();
+
+                      // Not at bottom — keep scrolling
+                      bottomRetries = 0;
                       if (s === document.documentElement) window.scrollBy(0, nextStep());
                       else s.scrollBy(0, nextStep());
                       setTimeout(tick, rnd(200, 500));
@@ -507,19 +508,21 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               return;
             }
 
-            // Deep scroll the internal container to trigger lazy loading
-            for (let i = 0; i < 6; i++) {
-              await ghostEval(`
-                (function() {
+            // Sweep-scroll to trigger all IntersectionObservers smoothly
+            await ghostEval(`
+              new Promise(function(resolve) {
+                var scrolls = 0;
+                var timer = setInterval(function() {
                   var s = Array.from(document.querySelectorAll('*')).reduce(function(best, el) {
                     return (el.scrollHeight > el.clientHeight && el.clientHeight > 300 && el.scrollHeight > best.scrollHeight) ? el : best;
                   }, document.documentElement);
-                  if (s === document.documentElement) window.scrollBy(0, window.innerHeight);
-                  else s.scrollBy(0, s.clientHeight);
-                })()
-              `);
-              await new Promise(r => setTimeout(r, 400));
-            }
+                  if (s === document.documentElement) window.scrollBy(0, window.innerHeight / 2);
+                  else s.scrollBy(0, s.clientHeight / 2);
+                  scrolls++;
+                  if (scrolls >= 14) { clearInterval(timer); resolve(); }
+                }, 400);
+              })
+            `);
 
             const html = await ghostEval('document.documentElement.outerHTML');
             settle(html ? { ok: true, html } : { ok: false, error: 'outerHTML empty' });
