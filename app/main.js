@@ -37,8 +37,8 @@ function _destroyGhost() {
 function _ensureGhost() {
   if (_ghostWin && !_ghostWin.isDestroyed()) return _ghostWin;
   _ghostWin = new BrowserWindow({
-    show:         false,   // fully headless — never surfaces to the user
-    skipTaskbar:  true,    // excluded from OS taskbar/dock
+    show:         false,
+    skipTaskbar:  true,
     width:        1100,
     height:       700,
     title:        'Days Between — Nugs Scraper',
@@ -338,19 +338,21 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
 
           const found = await ghostEval(`
             (function() {
-              // play.nugs.net /watch: video cards (classic + modern class names)
+              // play.nugs.net /watch: video cards (classic + modern class names + href patterns)
               var watchCards = document.querySelectorAll(
                 '[class*="ShowCard"],[class*="show-card"],[class*="ContentCard"],[class*="content-card"],' +
-                '[class*="Tile"],[class*="Card"],[class*="GridItem"]'
+                '[class*="Tile"],[class*="Card"],[class*="GridItem"],' +
+                'a[href*="/watch/"],a[href*="/livestreams/"]'
               ).length;
               // play.nugs.net /browse/artists/ or /library/: artist links + library items
               var artistLinks = document.querySelectorAll(
                 'a[href*="/artist/"],a[href*="/browse/artists/"],a[href*="/p/"],.artist-name'
               ).length;
-              // play.nugs.net /library/: library item cards
+              // play.nugs.net /library/: library item cards + href patterns
               var libItems = document.querySelectorAll(
                 '[class*="LibraryItem"],[class*="library-item"],' +
-                '.stash-grid-item,.grid-artist-name,.showtitle-st'
+                '.stash-grid-item,.grid-artist-name,.showtitle-st,' +
+                'a[href*="/library/"],a[href*="/stash/"]'
               ).length;
               var total = Math.max(watchCards, artistLinks, libItems);
               return total;
@@ -384,6 +386,7 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                         '[class*="LibraryItem"]', '[class*="library-item"]',
                         '[class*="ShowCard"]',    '[class*="show-card"]',
                         '[class*="ContentCard"]', '[class*="content-card"]',
+                        '[class*="GridItem"]',    '[class*="Tile"]',
                       ].join(',');
                       document.querySelectorAll(ITEM_SEL).forEach(function(item) {
                         var a    = item.querySelector('a[href]');
@@ -493,8 +496,11 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               return;
             }
 
-            await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
-            await new Promise(r => setTimeout(r, 500));
+            // Deep scroll to force React to render lazy-loaded rows
+            for (let i = 0; i < 5; i++) {
+              await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
+              await new Promise(r => setTimeout(r, 600));
+            }
             const html = await ghostEval('document.documentElement.outerHTML');
             settle(html ? { ok: true, html } : { ok: false, error: 'outerHTML empty' });
             return;
@@ -936,6 +942,36 @@ ipcMain.on('open-url', (_, url) => {
   if (url.startsWith('http://') || url.startsWith('https://')) {
     require('electron').shell.openExternal(url);
   }
+});
+
+// ── Nugs login portal ─────────────────────────────────────────────────────
+// Opens a visible BrowserWindow on the persist:nugs partition so the user
+// can log in to play.nugs.net.  Because it shares the ghost's cookie jar,
+// clearance and session cookies are immediately available to the scraper.
+ipcMain.on('show-nugs-login', () => {
+  const authWin = new BrowserWindow({
+    width:             500,
+    height:            750,
+    title:             'Nugs.net — Sign In',
+    autoHideMenuBar:   true,
+    webPreferences: {
+      partition:        'persist:nugs',
+      nodeIntegration:  false,
+      contextIsolation: true,
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+  });
+
+  authWin.loadURL('https://play.nugs.net/login');
+
+  // Auto-close once the user lands on a post-login page
+  authWin.webContents.on('did-navigate', (_, url) => {
+    if (url.includes('/home') || url.includes('/library') || url.includes('/watch')) {
+      setTimeout(() => { if (!authWin.isDestroyed()) authWin.close(); }, 1000);
+    }
+  });
 });
 
 // ── Last.fm IPC ───────────────────────────────────────────────────────────

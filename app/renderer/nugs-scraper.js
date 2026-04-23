@@ -132,7 +132,7 @@ function extractStructuralCards(doc, isLive) {
   const ART_SELS  = ['.artist','[class*="artist"]','.performer','.band','.subtitle'];
   const DATE_SELS = ['.date','time','[datetime]','[class*="date"]'];
 
-  // Candidate containers: structural block-level elements with both img & a
+  // Candidate containers: structural block-level elements with both img/bg & a
   const candidates = [
     ...doc.querySelectorAll(
       'li, article, [class*="card"], [class*="item"], ' +
@@ -141,19 +141,29 @@ function extractStructuralCards(doc, isLive) {
     ),
   ].filter(el =>
     !el.closest(SKIP) &&
-    el.querySelector('img') &&
+    (el.querySelector('img') ||
+     el.querySelector('[style*="url"]') ||
+     el.getAttribute('style')?.includes('url')) &&
     el.querySelector('a[href]')
   );
 
   if (candidates.length) {
     return candidates.map(el => {
       const a = el.querySelector('a[href]');
+      let imgEl   = el.querySelector('img');
+      let imageUrl = imgEl ? (imgEl.src || imgEl.dataset?.src || '') : '';
+      if (!imageUrl) {
+        const bgEl = el.querySelector('[style*="url"]') ||
+                     (el.getAttribute('style')?.includes('url') ? el : null);
+        const bg   = bgEl ? bgEl.getAttribute('style') : '';
+        const m    = bg.match(/url\(['"]?([^'")]+)['"]?\)/);
+        if (m) imageUrl = abs(m[1]);
+      }
       return {
         title:    extractText(el, TEXT_SELS) || 'Show',
         artist:   extractText(el, ART_SELS),
         date:     extractText(el, DATE_SELS),
-        imageUrl: el.querySelector('img')?.src
-               ?? el.querySelector('img')?.dataset?.src ?? '',
+        imageUrl,
         linkUrl:  abs(a?.getAttribute('href') ?? ''),
         isLive,
       };
