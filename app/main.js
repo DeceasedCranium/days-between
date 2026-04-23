@@ -509,6 +509,16 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
         settle(html ? { ok: true, html } : { ok: false, error: 'poll exhausted, empty snapshot' });
       }
 
+      // did-fail-load fires when Chromium's network stack rejects the request
+      // (ERR_FAILED, ERR_CONNECTION_REFUSED, etc.).  Without this handler the
+      // ghost just sits idle until the 25 s hard timer fires.
+      ghost.webContents.on('did-fail-load', (_, errCode, errDesc, failedUrl) => {
+        if (settled) return;
+        if (errCode === -3) return; // -3 = ERR_ABORTED — normal for redirects, ignore
+        console.warn(`[ghost] did-fail-load: ${errDesc} (${errCode}) for ${failedUrl}`);
+        settle({ ok: false, error: `${errDesc} (${errCode}) loading '${failedUrl}'` });
+      });
+
       ghost.webContents.once('dom-ready', onDomReady);
       ghost.loadURL(url).catch(e => settle({ ok: false, error: e.message }));
     });
