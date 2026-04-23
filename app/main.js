@@ -378,39 +378,32 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                   return new Promise(function(resolve) {
                     var all = new Map(); // keyed by relative href slug
 
-                    // Multi-selector harvest: works on both play.nugs.net /library/
-                    // and legacy www.nugs.net /stash/ selectors
+                    // URL-driven harvest: attach directly to <a> tags before
+                    // React virtualization evicts off-screen DOM nodes
                     function harvest() {
-                      var ITEM_SEL = [
-                        '[class*="LibraryItem"]', '[class*="library-item"]',
-                        '[class*="ShowCard"]',    '[class*="show-card"]',
-                        '[class*="ContentCard"]', '[class*="content-card"]',
-                        '[class*="GridItem"]',    '[class*="Tile"]',
-                        'a[href*="/library/"]',   'a[href*="/watch/"]',
-                      ].join(',');
-                      document.querySelectorAll(ITEM_SEL).forEach(function(item) {
-                        var a    = item.querySelector('a[href]');
-                        var href = a ? (a.getAttribute('href') || '') : '';
-                        if (!href) return;
-                        var key  = href.split('?')[0];
-                        if (all.has(key)) return;
-                        var abs  = href.startsWith('http') ? href : PLAY_BASE + (href.startsWith('/') ? href : '/' + href);
-                        var q    = function(sel) { var el = item.querySelector(sel); return el ? el.textContent.trim() : ''; };
-                        var img  = item.querySelector('img');
-                        // Try play.nugs.net selectors first, fall back to www.nugs.net selectors
-                        var title  = q('[class*="title"],[class*="Title"]') || q('.showtitle-st') || q('[class*="name"],[class*="Name"]');
-                        var artist = q('[class*="artist"],[class*="Artist"]') || q('.grid-artist-name');
-                        var date   = q('[class*="date"],[class*="Date"],time') || q('.grid-launch-date');
-                        var venue  = q('[class*="venue"],[class*="Venue"]') || q('.grid-venue');
-                        all.set(key, {
-                          title:    title || artist,
-                          artist:   artist,
-                          date:     date,
-                          venue:    venue,
-                          imageUrl: img ? (img.src || img.dataset.src || '') : '',
-                          linkUrl:  abs,
-                          isLive:   false,
-                        });
+                      document.querySelectorAll('a[href*="/library/"], a[href*="/watch/"]').forEach(function(a) {
+                        var href = a.getAttribute('href') || '';
+                        // Skip generic nav links
+                        if (href.includes('/home') || href.includes('/browse')) return;
+
+                        var imgEl    = a.querySelector('img');
+                        var imageUrl = imgEl ? (imgEl.src || (imgEl.dataset && imgEl.dataset.src) || '') : '';
+                        if (!imageUrl) {
+                          var bgEl = a.querySelector('[style*="url"]') ||
+                                     (a.getAttribute('style') && a.getAttribute('style').indexOf('url') !== -1 ? a : null);
+                          if (bgEl) {
+                            var m = bgEl.getAttribute('style').match(/url\(['"]?([^'"]+)['"]?\)/);
+                            if (m) imageUrl = m[1];
+                          }
+                        }
+
+                        var title = a.getAttribute('title') || a.getAttribute('aria-label') || a.innerText || '';
+                        title = title.replace(/Play|Watch|Add to Stash|Load More/ig, '').replace(/\n/g, ' ').trim();
+
+                        if (title.length > 2 && href) {
+                          var key = href.split('?')[0];
+                          all.set(key, { linkUrl: href, title: title, imageUrl: imageUrl });
+                        }
                       });
                     }
 
@@ -508,7 +501,20 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               return;
             }
 
-            // Sweep-scroll to trigger all IntersectionObservers smoothly
+            // Start vacuum — continuously collect <a> outerHTML before React
+            // virtualization destroys off-screen nodes
+            await ghostEval(`
+              window._harvestedHtml = new Set();
+              window._harvestInterval = setInterval(function() {
+                document.querySelectorAll(
+                  'a[href*="/watch/"], a[href*="/livestreams/"], a[href*="/p/"], a[href*="/catalog/"]'
+                ).forEach(function(a) {
+                  window._harvestedHtml.add(a.outerHTML);
+                });
+              }, 200);
+            `);
+
+            // Sweep-scroll to surface all rows past IntersectionObservers
             await ghostEval(`
               new Promise(function(resolve) {
                 var scrolls = 0;
@@ -524,7 +530,11 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               })
             `);
 
-            const html = await ghostEval('document.documentElement.outerHTML');
+            // Stop vacuum and return synthesized HTML block
+            const html = await ghostEval(`
+              clearInterval(window._harvestInterval);
+              '<div id="synthesized-scrape">' + Array.from(window._harvestedHtml).join('') + '</div>';
+            `);
             settle(html ? { ok: true, html } : { ok: false, error: 'outerHTML empty' });
             return;
           }
