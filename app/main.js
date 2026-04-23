@@ -377,6 +377,10 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                   var PLAY_BASE = 'https://play.nugs.net';
                   return new Promise(function(resolve) {
                     var all = new Map(); // keyed by relative href slug
+                    var bottomRetries = 0;
+                    // Vacuum: harvest every 200ms during scroll so we catch
+                    // virtualized stash cards before React evicts them.
+                    var stashHarvestInterval = setInterval(harvest, 200);
 
                     // URL-driven harvest: attach directly to <a> tags before
                     // React virtualization evicts off-screen DOM nodes.
@@ -448,7 +452,6 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                     }
                     // In-page jitter helper (mirrors main-process jitter)
                     function rnd(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-                    var bottomRetries = 0;
 
                     function tick() {
                       harvest();
@@ -476,7 +479,8 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                           return;
                         }
 
-                        // Retries exhausted — harvest and finish
+                        // Retries exhausted — stop vacuum, final harvest, finish
+                        clearInterval(stashHarvestInterval);
                         harvest();
                         console.log('[ghost-stash] harvest complete:', all.size, 'items');
                         resolve(JSON.stringify(Array.from(all.values())));
@@ -808,50 +812,29 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
 
-  // Nugs.net CORS fix — inject required headers for nugs API/stream requests only
+  // Nugs header spoof — single unified interceptor applied to BOTH the default
+  // session AND the persist:nugs ghost partition.  Matches on any URL that
+  // contains a nugs/akamai host so Akamai HLS redirects can't escape the net.
   const { session } = require('electron');
-  const nugsSes = session.fromPartition('persist:nugs');
-  session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: [
-        '*://*.nugs.net/*',             // covers streamapi/id/subscriptions/www/play/cdn
-        '*://*.nugs.com/*',              // occasional legacy nugs.com endpoints
-        '*://*.akamaized.net/*',         // nugs HLS stream segments (hdnea token requires Referer)
-      ]
-    },
-    (details, callback) => {
-      const url = details.url;
-
-      if (url.includes('akamaized.net')) {
-        // HLS stream segments — must look like they come from the nugs player
-        details.requestHeaders['Referer']    = 'https://play.nugs.net/';
-        details.requestHeaders['Origin']     = 'https://play.nugs.net';
-        details.requestHeaders['User-Agent'] = 'nugsnetAndroid';
-        callback({ requestHeaders: details.requestHeaders });
-        return;
-      } else if (url.includes('www.nugs.net')) {
-        // Dashboard HTML page scraping — send a realistic Chrome browser UA so
-        // nugs.net doesn't detect us as a bot and return HTTP 410.
-        details.requestHeaders['User-Agent'] =
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-        details.requestHeaders['Accept'] =
-          'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8';
-        details.requestHeaders['Accept-Language'] = 'en-US,en;q=0.9';
-      } else if (url.includes('bigriver/') || url.includes('bigriver')) {
-        // Nugs CDN audio streams
-        details.requestHeaders['User-Agent'] = 'nugsnetAndroid';
-        details.requestHeaders['Origin']  = 'https://play.nugs.net';
-        details.requestHeaders['Referer'] = 'https://play.nugs.net/';
-      } else {
-        // Nugs API endpoints (streamapi, id, subscriptions)
-        details.requestHeaders['User-Agent'] =
-          'NugsNet/3.26.724 (Android; 7.1.2; Asus; ASUS_Z01QD; Scale/2.0; en)';
-        details.requestHeaders['Origin']  = 'https://play.nugs.net';
-        details.requestHeaders['Referer'] = 'https://play.nugs.net/';
-      }
-
-      callback({ requestHeaders: details.requestHeaders });
+  const spoofHeaders = (details, callback) => {
+    const target = details.url.toLowerCase();
+    if (
+      target.includes('nugs.net') ||
+      target.includes('nugs.com') ||
+      target.includes('akamaized.net') ||
+      target.includes('akamaihd.net')
+    ) {
+      details.requestHeaders['Origin']     = 'https://play.nugs.net';
+      details.requestHeaders['Referer']    = 'https://play.nugs.net/';
+      details.requestHeaders['User-Agent'] =
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
     }
-  );
+    callback({ requestHeaders: details.requestHeaders });
+  };
+
+  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, spoofHeaders);
+  const nugsSession = session.fromPartition('persist:nugs');
+  if (nugsSession) nugsSession.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, spoofHeaders);
 
   // HLS live-stream interceptor — catches nugs webcasts before the <audio>
   // element tries to play them natively.  We only block resourceType 'media'
