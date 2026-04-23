@@ -382,11 +382,11 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
                     // and legacy www.nugs.net /stash/ selectors
                     function harvest() {
                       var ITEM_SEL = [
-                        '.stash-grid-item',
                         '[class*="LibraryItem"]', '[class*="library-item"]',
                         '[class*="ShowCard"]',    '[class*="show-card"]',
                         '[class*="ContentCard"]', '[class*="content-card"]',
                         '[class*="GridItem"]',    '[class*="Tile"]',
+                        'a[href*="/library/"]',   'a[href*="/watch/"]',
                       ].join(',');
                       document.querySelectorAll(ITEM_SEL).forEach(function(item) {
                         var a    = item.querySelector('a[href]');

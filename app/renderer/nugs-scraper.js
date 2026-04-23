@@ -170,31 +170,40 @@ function extractStructuralCards(doc, isLive) {
     }).filter(c => c.linkUrl && c.linkUrl !== BASE + '/');
   }
 
-  // Fallback: <a> tags that directly wrap or contain an <img> or background image
+  // Fallback: extract based on URL pattern rather than visual elements
   const links = [...doc.querySelectorAll('a[href]')].filter(a => {
     if (a.closest(SKIP)) return false;
-    if (a.querySelector('img')) return true;
-    const styleEl   = a.querySelector('[style*="url"]');
-    const selfStyle = a.getAttribute('style');
-    return styleEl || (selfStyle && selfStyle.includes('url'));
+    const href = a.getAttribute('href') || '';
+    // Only keep links that point to catalog items, videos, or library items
+    const isContent = href.includes('/watch/') || href.includes('/library/') ||
+                      href.includes('/live-download-of') || href.includes('/p/');
+    // Reject generic nav links
+    const isNotNav  = !href.includes('/home') && !href.includes('/browse') &&
+                      !href.includes('/subscribe');
+    return isContent && isNotNav;
   });
 
   return links.map(a => {
-    let imageUrl = a.querySelector('img')?.src ?? a.querySelector('img')?.dataset?.src ?? '';
+    let imgEl    = a.querySelector('img');
+    // data-src is what React sets before lazy-loading fires
+    let imageUrl = imgEl ? (imgEl.src || imgEl.dataset?.src || '') : '';
     if (!imageUrl) {
       const bgEl = a.querySelector('[style*="url"]') ||
                    (a.getAttribute('style')?.includes('url') ? a : null);
       const bg   = bgEl ? bgEl.getAttribute('style') : '';
-      const m    = bg.match(/url\(['"]?([^'")]+)['"]?\)/);
+      const m    = bg.match(/url\(['"]?([^'"]+)['"]?\)/);
       if (m) imageUrl = abs(m[1]);
     }
+    let titleText = (a.getAttribute('title') || a.getAttribute('aria-label') ||
+                     extractText(a, TEXT_SELS) || a.textContent.trim());
+    // Strip stray React UI labels injected into link text
+    titleText = titleText.replace(/Play|Watch|Add to Stash|Load More/ig, '').trim().slice(0, 80) || 'Show';
     return {
-      title:   (a.getAttribute('title') ?? a.getAttribute('aria-label') ??
-                extractText(a, TEXT_SELS) ?? a.textContent.trim().slice(0, 80)) || 'Show',
+      title:   titleText,
       artist:  '',
       date:    '',
       imageUrl,
-      linkUrl: abs(a.getAttribute('href') ?? ''),
+      linkUrl: abs(a.getAttribute('href') || ''),
       isLive,
     };
   }).filter(c => c.linkUrl && c.linkUrl !== BASE + '/');
