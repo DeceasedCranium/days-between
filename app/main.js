@@ -44,15 +44,15 @@ function _ensureGhost() {
     title:        'Days Between — Nugs Scraper',
     // persist:nugs gives the ghost window its own cookie jar that survives
     // restarts — Cloudflare clearance cookies are retained across sessions.
-    // userAgent spoofs a real Linux Chrome so nugs.net doesn't fingerprint us
-    // as Electron/Node and serve error pages.
+    // userAgent matches the Windows Chrome UA used in our header interceptors
+    // so every layer of the stack presents a consistent fingerprint.
     webPreferences: {
       partition:        'persist:nugs',
       nodeIntegration:  false,
       contextIsolation: true,
       userAgent:
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     },
   });
   _ghostWin.on('closed', () => { _ghostWin = null; _scraping = false; });
@@ -145,6 +145,11 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               // fallback: account/logout indicators
               '[class*="userMenu"]','[class*="user-menu"]','[class*="logout"]',
               '[aria-label*="account" i]','[aria-label*="library" i]',
+              // broader signals resilient to Nugs UI changes
+              '[role="navigation"] a[href*="logout"]',
+              '[class*="User"]','[class*="Avatar"]',
+              'button[aria-haspopup="true"]',
+              'nav a[href*="library"]',
             ].join(',');
             const startMs = Date.now();
             const poll = async () => {
@@ -333,13 +338,14 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
 
           const found = await ghostEval(`
             (function() {
-              // play.nugs.net /watch: video cards
+              // play.nugs.net /watch: video cards (classic + modern class names)
               var watchCards = document.querySelectorAll(
-                '[class*="ShowCard"],[class*="show-card"],[class*="ContentCard"],[class*="content-card"]'
+                '[class*="ShowCard"],[class*="show-card"],[class*="ContentCard"],[class*="content-card"],' +
+                '[class*="Tile"],[class*="Card"],[class*="GridItem"]'
               ).length;
               // play.nugs.net /browse/artists/ or /library/: artist links + library items
               var artistLinks = document.querySelectorAll(
-                'a[href*="/artist/"],a[href*="/browse/artists/"],.artist-name'
+                'a[href*="/artist/"],a[href*="/browse/artists/"],a[href*="/p/"],.artist-name'
               ).length;
               // play.nugs.net /library/: library item cards
               var libItems = document.querySelectorAll(

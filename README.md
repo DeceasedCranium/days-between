@@ -164,6 +164,7 @@ No telemetry, no accounts, no cloud sync.
 
 | Version | Highlights |
 |---------|-----------|
+| **v1.5.5** | Scraper hardening: UA synchronized to Windows Chrome 124 across all layers; broader login-proof selectors; modern Tile/Card/GridItem content polling; `[class*="Tile"]/[class*="grid"]` added to structural card extractor |
 | **v1.5.4** | Ghost scraper `did-fail-load` handler — fast-fails on Cloudflare/network errors instead of waiting the full 25 s timeout |
 | **v1.5.3** | HLS buffer caps (30 s / 60 s max) applied to main audio player and video-player.js — prevents RAM exhaustion on long shows |
 | **v1.5.2** | Security hardening: `shell.openExternal` restricted to http/https; ghost scraper domain-gated to nugs.net only; dead `fetch-image` proxy removed; HLS buffer capped at 30/60 s to prevent RAM bloat |

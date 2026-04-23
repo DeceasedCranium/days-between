@@ -136,7 +136,8 @@ function extractStructuralCards(doc, isLive) {
   const candidates = [
     ...doc.querySelectorAll(
       'li, article, [class*="card"], [class*="item"], ' +
-      '[class*="show"], [class*="event"], [class*="product"], [class*="tile"]'
+      '[class*="show"], [class*="event"], [class*="product"], [class*="tile"], ' +
+      '[class*="Tile"], [class*="grid"]'
     ),
   ].filter(el =>
     !el.closest(SKIP) &&
