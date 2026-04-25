@@ -14,7 +14,6 @@ contextBridge.exposeInMainWorld('ipc', {
   openUrl:      (url)                     => ipcRenderer.send('open-url', url),
   mprisUpdate:  (data)                    => ipcRenderer.send('mpris:update', data),
   onMpris:      (fn)                      => ipcRenderer.on('mpris', (_, cmd) => fn(cmd)),
-  showNugsLogin:     ()                   => ipcRenderer.send('show-nugs-login'),
   scrapeNugsHtml:    (url)                => ipcRenderer.invoke('scrape-nugs-html', url),
   extractNugsStream: (url)               => ipcRenderer.invoke('extract-nugs-stream', url),
   injectNugsHtml:   (html)               => ipcRenderer.invoke('inject-nugs-html', html),

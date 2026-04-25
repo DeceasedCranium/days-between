@@ -132,83 +132,49 @@ function extractStructuralCards(doc, isLive) {
   const ART_SELS  = ['.artist','[class*="artist"]','.performer','.band','.subtitle'];
   const DATE_SELS = ['.date','time','[datetime]','[class*="date"]'];
 
-  // Candidate containers: structural block-level elements with both img/bg & a.
-  // Include both lower and upper-case variants to catch React CSS-module hashed
-  // names like _StreamCard_17v41_2 (contains "Card") or _Tile_abc_1 (contains "Tile").
+  // Candidate containers: structural block-level elements with both img & a
   const candidates = [
     ...doc.querySelectorAll(
-      'li, article, ' +
-      '[class*="card"], [class*="Card"], [class*="Stream"], ' +
-      '[class*="item"], [class*="Item"], ' +
-      '[class*="show"], [class*="event"], [class*="product"], ' +
-      '[class*="tile"], [class*="Tile"], [class*="grid"]'
+      'li, article, [class*="card"], [class*="item"], ' +
+      '[class*="show"], [class*="event"], [class*="product"], [class*="tile"]'
     ),
   ].filter(el =>
     !el.closest(SKIP) &&
-    (el.querySelector('img') ||
-     el.querySelector('[style*="url"]') ||
-     el.getAttribute('style')?.includes('url')) &&
+    el.querySelector('img') &&
     el.querySelector('a[href]')
   );
 
   if (candidates.length) {
     return candidates.map(el => {
       const a = el.querySelector('a[href]');
-      let imgEl   = el.querySelector('img');
-      let imageUrl = imgEl ? (imgEl.src || imgEl.dataset?.src || '') : '';
-      if (!imageUrl) {
-        const bgEl = el.querySelector('[style*="url"]') ||
-                     (el.getAttribute('style')?.includes('url') ? el : null);
-        const bg   = bgEl ? bgEl.getAttribute('style') : '';
-        const m    = bg.match(/url\(['"]?([^'")]+)['"]?\)/);
-        if (m) imageUrl = abs(m[1]);
-      }
       return {
         title:    extractText(el, TEXT_SELS) || 'Show',
         artist:   extractText(el, ART_SELS),
         date:     extractText(el, DATE_SELS),
-        imageUrl,
+        imageUrl: el.querySelector('img')?.src
+               ?? el.querySelector('img')?.dataset?.src ?? '',
         linkUrl:  abs(a?.getAttribute('href') ?? ''),
         isLive,
       };
     }).filter(c => c.linkUrl && c.linkUrl !== BASE + '/');
   }
 
-  // Fallback: any anchor that visually looks like a card (has an img child).
-  // Deliberately avoid URL-pattern filtering — Nugs changes their routing and
-  // any hardcoded path prefix will eventually break.
-  const links = [...doc.querySelectorAll('a[href]')].filter(a => {
-    if (a.closest(SKIP)) return false;
-    const href = a.getAttribute('href') || '';
-    if (href.length < 2 || href.startsWith('#')) return false;
-    // Must contain an image — that's what distinguishes a content card from a nav link
-    return !!a.querySelector('img');
-  });
+  // Fallback: <a> tags that directly wrap or contain an <img>
+  const links = [...doc.querySelectorAll('a[href]')]
+    .filter(a => !a.closest(SKIP) && a.querySelector('img'));
 
-  return links.map(a => {
-    let imgEl    = a.querySelector('img');
-    // data-src is what React sets before lazy-loading fires
-    let imageUrl = imgEl ? (imgEl.src || imgEl.dataset?.src || '') : '';
-    if (!imageUrl) {
-      const bgEl = a.querySelector('[style*="url"]') ||
-                   (a.getAttribute('style')?.includes('url') ? a : null);
-      const bg   = bgEl ? bgEl.getAttribute('style') : '';
-      const m    = bg.match(/url\(['"]?([^'"]+)['"]?\)/);
-      if (m) imageUrl = abs(m[1]);
-    }
-    let titleText = (a.getAttribute('title') || a.getAttribute('aria-label') ||
-                     extractText(a, TEXT_SELS) || a.textContent.trim());
-    // Strip stray React UI labels injected into link text
-    titleText = titleText.replace(/Play|Watch|Add to Stash|Load More/ig, '').trim().slice(0, 80) || 'Show';
-    return {
-      title:   titleText,
-      artist:  '',
-      date:    '',
-      imageUrl,
-      linkUrl: abs(a.getAttribute('href') || ''),
-      isLive,
-    };
-  }).filter(c => c.linkUrl && c.linkUrl !== BASE + '/');
+  return links.map(a => ({
+    title:    (a.getAttribute('title')
+           ?? a.getAttribute('aria-label')
+           ?? extractText(a, TEXT_SELS)
+           ?? a.textContent.trim().slice(0, 80))
+           || 'Show',
+    artist:   '',
+    date:     '',
+    imageUrl: a.querySelector('img')?.src ?? '',
+    linkUrl:  abs(a.getAttribute('href') ?? ''),
+    isLive,
+  })).filter(c => c.linkUrl && c.linkUrl !== BASE + '/');
 }
 
 /* ── Public scrapers ────────────────────────────────────────────── */
@@ -257,30 +223,69 @@ export async function scrapeRecent() {
 
 export async function scrapeStash() {
   // play.nugs.net /library/ is the new My Library hub.
-  // The ghost vacuum returns a synthesized HTML block — parse it the same
-  // way as scrapeLive/scrapeRecent via extractStructuralCards.
+  // Ghost window does a full scroll+harvest and returns result.stashItems JSON.
+  // We fall through to HTML parse only if stashItems is absent.
   const urls = [
     `${BASE}/library/livestreams`, // primary — video/live recordings
     `${BASE}/library/audio`,       // audio recordings
     `${BASE}/library`,             // root library (may redirect)
+    `${WWW_BASE}/stash/`,          // legacy storefront fallback
   ];
 
-  let html = '', lastErr = null;
+  let result = null, lastErr = null;
   for (const url of urls) {
-    try { html = await fetchPage(url); if (html) break; }
+    try { result = await fetchFull(url); break; }
     catch (e) { lastErr = e; }
   }
-  if (!html) throw lastErr ?? new Error('nugs-scraper: stash page not found');
+  if (!result) throw lastErr ?? new Error('nugs-scraper: stash page not found');
 
-  const doc     = parseDoc(html);
-  const raw     = extractStructuralCards(doc, false);
-  const results = dedupeByUrl(raw);
+  // ── Fast path: ghost returned scroll-harvest JSON ────────────────────
+  if (Array.isArray(result.stashItems) && result.stashItems.length > 0) {
+    console.info(`[nugs-scraper] scrapeStash: ${result.stashItems.length} items from scroll-harvest`);
+    const cards = result.stashItems.map(item => ({
+      title:    item.title || item.artist || 'Show',
+      artist:   item.artist ?? '',
+      date:     item.date   ?? '',
+      venue:    item.venue  ?? '',
+      imageUrl: item.imageUrl ?? '',
+      linkUrl:  item.linkUrl  ? abs(item.linkUrl) : '',
+      isLive:   false,
+    })).filter(c => c.linkUrl);
+    return dedupeByUrl(cards);
+  }
 
+  // ── HTML fallback: parse the snapshot ───────────────────────────────
+  const html = result.html ?? '';
+  if (!html) {
+    console.warn('[nugs-scraper] scrapeStash: no stashItems and no HTML snapshot');
+    return [];
+  }
+  const doc = parseDoc(html);
+
+  // ── Parse confirmed .stash-grid-item cards ───────────────────────────
+  const items = [...doc.querySelectorAll('.stash-grid-item')];
+  if (items.length > 0) {
+    console.info(`[nugs-scraper] scrapeStash: ${items.length} .stash-grid-item elements (HTML snapshot)`);
+    const cards = items.map(item => {
+      const title    = item.querySelector('.showtitle-st')?.textContent?.trim()     ?? '';
+      const artist   = item.querySelector('.grid-artist-name')?.textContent?.trim() ?? '';
+      const date     = item.querySelector('.grid-launch-date')?.textContent?.trim() ?? '';
+      const venue    = item.querySelector('.grid-venue')?.textContent?.trim()       ?? '';
+      const img      = item.querySelector('img');
+      const imageUrl = img?.src ?? img?.dataset?.src ?? '';
+      const a        = item.querySelector('a[href]');
+      const linkUrl  = a ? abs(a.getAttribute('href') ?? '') : '';
+      return { title: title || artist, artist, date, venue, imageUrl, linkUrl, isLive: false };
+    }).filter(c => c.linkUrl);
+    return dedupeByUrl(cards);
+  }
+
+  // ── Fallback: generic structural card extractor ──────────────────────
+  console.warn('[nugs-scraper] scrapeStash: no .stash-grid-item found — using generic extractor');
+  const results = dedupeByUrl(extractStructuralCards(doc, false));
   if (!results.length) {
     console.warn('[nugs-scraper] scrapeStash: 0 results. Body HTML (first 6000):');
     console.warn(doc.body?.innerHTML?.slice(0, 6000));
-  } else {
-    console.info(`[nugs-scraper] scrapeStash: ${results.length} unique items (${raw.length} raw)`);
   }
   return results;
 }

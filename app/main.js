@@ -37,22 +37,22 @@ function _destroyGhost() {
 function _ensureGhost() {
   if (_ghostWin && !_ghostWin.isDestroyed()) return _ghostWin;
   _ghostWin = new BrowserWindow({
-    show:         false,
-    skipTaskbar:  true,
+    show:         false,   // fully headless — never surfaces to the user
+    skipTaskbar:  true,    // excluded from OS taskbar/dock
     width:        1100,
     height:       700,
     title:        'Days Between — Nugs Scraper',
     // persist:nugs gives the ghost window its own cookie jar that survives
     // restarts — Cloudflare clearance cookies are retained across sessions.
-    // userAgent matches the Windows Chrome UA used in our header interceptors
-    // so every layer of the stack presents a consistent fingerprint.
+    // userAgent spoofs a real Linux Chrome so nugs.net doesn't fingerprint us
+    // as Electron/Node and serve error pages.
     webPreferences: {
       partition:        'persist:nugs',
       nodeIntegration:  false,
       contextIsolation: true,
       userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     },
   });
   _ghostWin.on('closed', () => { _ghostWin = null; _scraping = false; });
@@ -145,11 +145,6 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
               // fallback: account/logout indicators
               '[class*="userMenu"]','[class*="user-menu"]','[class*="logout"]',
               '[aria-label*="account" i]','[aria-label*="library" i]',
-              // broader signals resilient to Nugs UI changes
-              '[role="navigation"] a[href*="logout"]',
-              '[class*="User"]','[class*="Avatar"]',
-              'button[aria-haspopup="true"]',
-              'nav a[href*="library"]',
             ].join(',');
             const startMs = Date.now();
             const poll = async () => {
@@ -338,21 +333,18 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
 
           const found = await ghostEval(`
             (function() {
-              // play.nugs.net /watch: video cards (classic + modern class names + href patterns)
+              // play.nugs.net /watch: video cards
               var watchCards = document.querySelectorAll(
-                '[class*="ShowCard"],[class*="show-card"],[class*="ContentCard"],[class*="content-card"],' +
-                '[class*="Tile"],[class*="Card"],[class*="GridItem"],' +
-                'a[href*="/watch/"],a[href*="/livestreams/"]'
+                '[class*="ShowCard"],[class*="show-card"],[class*="ContentCard"],[class*="content-card"]'
               ).length;
               // play.nugs.net /browse/artists/ or /library/: artist links + library items
               var artistLinks = document.querySelectorAll(
-                'a[href*="/artist/"],a[href*="/browse/artists/"],a[href*="/p/"],.artist-name'
+                'a[href*="/artist/"],a[href*="/browse/artists/"],.artist-name'
               ).length;
-              // play.nugs.net /library/: library item cards + href patterns
+              // play.nugs.net /library/: library item cards
               var libItems = document.querySelectorAll(
                 '[class*="LibraryItem"],[class*="library-item"],' +
-                '.stash-grid-item,.grid-artist-name,.showtitle-st,' +
-                'a[href*="/library/"],a[href*="/stash/"]'
+                '.stash-grid-item,.grid-artist-name,.showtitle-st'
               ).length;
               var total = Math.max(watchCards, artistLinks, libItems);
               return total;
@@ -362,63 +354,142 @@ ipcMain.handle('scrape-nugs-html', async (_, url) => {
           console.log('[ghost] poll', elapsed + 'ms —', (found ?? 0), '(need ' + MIN_FOUND + ')');
 
           if ((found ?? 0) >= MIN_FOUND) {
-            // Start the vacuum to catch virtualized DOM nodes with their containers
-            await ghostEval(`
-              window._harvestedHtml = new Set();
-              window._harvestInterval = setInterval(function() {
-                // Use the same class-based selectors the poll already confirms are present.
-                // URL-pattern matching is fragile when Nugs changes their routing.
-                document.querySelectorAll('[class*="Card"],[class*="Tile"],[class*="Item"],[class*="Stream"]').forEach(function(el) {
-                  if (el.querySelector('img') && !el.closest('nav, header, footer')) {
-                    window._harvestedHtml.add(el.outerHTML);
-                  }
-                });
-                // Fallback: any anchor directly containing an img (catches layouts with no card wrappers)
-                document.querySelectorAll('a[href]').forEach(function(a) {
-                  var href = a.getAttribute('href') || '';
-                  if (href.length > 1 && !href.startsWith('#') && a.querySelector('img') && !a.closest('nav, header, footer')) {
-                    window._harvestedHtml.add(a.outerHTML);
-                  }
-                });
-              }, 200);
-            `);
+            if (isStash) {
+              // ── Stash Scroll & Harvest ───────────────────────────────────
+              // Same virtualised-DOM approach as the artist A-Z engine.
+              // Scroll top→bottom in half-viewport steps, harvesting every
+              // .stash-grid-item into a Map on each tick.  At the bottom, click
+              // Load More if present and repeat; stop when no button and at bottom.
+              // Returns JSON so the parser can use a fast path (no HTML snapshot).
+              armHardTimer(120_000);
+              console.log('[ghost] stash: starting scroll+harvest');
 
-            // Sweep-scroll the page to trigger React lazy loading
-            await ghostEval(`
-              return new Promise(function(resolve) {
-                var scrolls = 0;
-                var timer = setInterval(function() {
-                  var s = Array.from(document.querySelectorAll('*')).reduce(function(best, el) {
-                    return (el.scrollHeight > el.clientHeight && el.clientHeight > 300 && el.scrollHeight > best.scrollHeight) ? el : best;
-                  }, document.documentElement);
+              const stashJson = await ghostEval(`
+                (function() {
+                  var PLAY_BASE = 'https://play.nugs.net';
+                  return new Promise(function(resolve) {
+                    var all = new Map(); // keyed by relative href slug
 
-                  if (s === document.documentElement) window.scrollBy(0, window.innerHeight / 2);
-                  else s.scrollBy(0, s.clientHeight / 2);
+                    // Multi-selector harvest: works on both play.nugs.net /library/
+                    // and legacy www.nugs.net /stash/ selectors
+                    function harvest() {
+                      var ITEM_SEL = [
+                        '.stash-grid-item',
+                        '[class*="LibraryItem"]', '[class*="library-item"]',
+                        '[class*="ShowCard"]',    '[class*="show-card"]',
+                        '[class*="ContentCard"]', '[class*="content-card"]',
+                      ].join(',');
+                      document.querySelectorAll(ITEM_SEL).forEach(function(item) {
+                        var a    = item.querySelector('a[href]');
+                        var href = a ? (a.getAttribute('href') || '') : '';
+                        if (!href) return;
+                        var key  = href.split('?')[0];
+                        if (all.has(key)) return;
+                        var abs  = href.startsWith('http') ? href : PLAY_BASE + (href.startsWith('/') ? href : '/' + href);
+                        var q    = function(sel) { var el = item.querySelector(sel); return el ? el.textContent.trim() : ''; };
+                        var img  = item.querySelector('img');
+                        // Try play.nugs.net selectors first, fall back to www.nugs.net selectors
+                        var title  = q('[class*="title"],[class*="Title"]') || q('.showtitle-st') || q('[class*="name"],[class*="Name"]');
+                        var artist = q('[class*="artist"],[class*="Artist"]') || q('.grid-artist-name');
+                        var date   = q('[class*="date"],[class*="Date"],time') || q('.grid-launch-date');
+                        var venue  = q('[class*="venue"],[class*="Venue"]') || q('.grid-venue');
+                        all.set(key, {
+                          title:    title || artist,
+                          artist:   artist,
+                          date:     date,
+                          venue:    venue,
+                          imageUrl: img ? (img.src || img.dataset.src || '') : '',
+                          linkUrl:  abs,
+                          isLive:   false,
+                        });
+                      });
+                    }
 
-                  scrolls++;
-                  if (scrolls >= 14) {
-                    clearInterval(timer);
-                    resolve();
-                  }
-                }, 400);
-              });
-            `);
+                    function findLoadMore() {
+                      return Array.from(document.querySelectorAll('button,a[role="button"],a'))
+                        .find(function(el) {
+                          var t = (el.textContent || '').trim().toLowerCase();
+                          return t === 'load more' || t === 'view more' || t.startsWith('load more');
+                        }) || null;
+                    }
 
-            // Stop vacuum and return synthesized HTML block
-            const vacSize = await ghostEval('clearInterval(window._harvestInterval); window._harvestedHtml.size');
-            console.log('[ghost] vacuum collected:', vacSize, 'items for', url);
-            if (!vacSize) {
-              const rawDom    = await ghostEval('document.body.innerHTML.substring(0, 6000)');
-              const sampleHrefs = await ghostEval(
-                'JSON.stringify(Array.from(document.querySelectorAll("a[href]")).slice(0,20).map(a=>a.getAttribute("href")))'
-              );
-              console.log('[ghost] RAW DOM (first 6000):', rawDom);
-              console.log('[ghost] sample hrefs:', sampleHrefs);
+                    function isAtBottom() {
+                      return window.scrollY + window.innerHeight >=
+                             document.documentElement.scrollHeight - 10;
+                    }
+
+                    // Base scroll step + random ±60px offset per tick — avoids
+                    // fixed-pixel scroll cadence that bot detectors fingerprint.
+                    function nextStep() {
+                      return Math.max(
+                        Math.floor(window.innerHeight / 2) + Math.floor(Math.random() * 120) - 60,
+                        200
+                      );
+                    }
+                    // In-page jitter helper (mirrors main-process jitter)
+                    function rnd(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+                    var cooldown = false;
+
+                    function tick() {
+                      harvest();
+                      if (isAtBottom()) {
+                        if (cooldown) { setTimeout(tick, rnd(200, 500)); return; }
+                        var btn = findLoadMore();
+                        if (btn) {
+                          console.log('[ghost-stash] clicking Load More — harvested so far:', all.size);
+                          btn.click();
+                          cooldown = true;
+                          // Mutation-Watch: wait for DOM to stabilise after click
+                          new Promise(function(res) {
+                            var debounce = null;
+                            function reset() { clearTimeout(debounce); debounce = setTimeout(res, rnd(400, 700)); }
+                            var ob = new MutationObserver(reset);
+                            ob.observe(document.body, { childList: true, subtree: true });
+                            reset();
+                            setTimeout(function() { ob.disconnect(); clearTimeout(debounce); res(); }, 2000);
+                          }).then(function() {
+                            cooldown = false;
+                            harvest();
+                            window.scrollBy(0, nextStep());
+                            setTimeout(tick, rnd(200, 500));
+                          });
+                        } else {
+                          // At bottom, no Load More — complete
+                          harvest();
+                          console.log('[ghost-stash] harvest complete:', all.size, 'items');
+                          resolve(JSON.stringify(Array.from(all.values())));
+                        }
+                        return;
+                      }
+                      window.scrollBy(0, nextStep());
+                      setTimeout(tick, rnd(200, 500));
+                    }
+
+                    window.scrollTo(0, 0);
+                    setTimeout(tick, rnd(400, 700)); // initial hydration pause
+                  });
+                })()
+              `);
+
+              if (settled) return;
+              let stashItems = null;
+              try { if (stashJson) stashItems = JSON.parse(stashJson); }
+              catch (e) { console.warn('[ghost] stash JSON parse failed:', e.message); }
+
+              if (stashItems?.length > 0) {
+                console.log(`[ghost] stash harvest: ${stashItems.length} items`);
+                settle({ ok: true, html: '', stashItems });
+              } else {
+                console.warn('[ghost] stash scroll+harvest got 0 items — falling back to HTML');
+                const snapHtml = await ghostEval('document.documentElement.outerHTML');
+                settle(snapHtml ? { ok: true, html: snapHtml } : { ok: false, error: 'stash harvest failed' });
+              }
+              return;
             }
-            const html = await ghostEval(
-              '"<div id=\\"synthesized-scrape\\">" + Array.from(window._harvestedHtml).join("") + "</div>"'
-            );
 
+            await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
+            await new Promise(r => setTimeout(r, 500));
+            const html = await ghostEval('document.documentElement.outerHTML');
             settle(html ? { ok: true, html } : { ok: false, error: 'outerHTML empty' });
             return;
           }
@@ -681,32 +752,52 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
 
-  // Nugs header spoof — single unified interceptor applied to BOTH the default
-  // session AND the persist:nugs ghost partition.  Matches on any URL that
-  // contains a nugs/akamai host so Akamai HLS redirects can't escape the net.
+  // Nugs.net CORS fix — inject required headers for nugs API/stream requests only
   const { session } = require('electron');
-  const spoofHeaders = (details, callback) => {
-    const target = details.url.toLowerCase();
+  const nugsSes = session.fromPartition('persist:nugs');
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: [
+        '*://streamapi.nugs.net/*',
+        '*://id.nugs.net/*',
+        '*://subscriptions.nugs.net/*',
+        '*://www.nugs.net/*',           // dashboard HTML scraping
+        '*://*.akamaized.net/*',        // nugs HLS stream segments (hdnea token requires Referer)
+      ]
+    },
+    (details, callback) => {
+      const url = details.url;
 
-    // Force UA to exactly match the Chrome 124 token fingerprint on every request
-    details.requestHeaders['User-Agent'] =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+      if (url.includes('akamaized.net')) {
+        // HLS stream segments — must look like they come from the nugs player
+        details.requestHeaders['Referer']    = 'https://play.nugs.net/';
+        details.requestHeaders['Origin']     = 'https://play.nugs.net';
+        details.requestHeaders['User-Agent'] = 'nugsnetAndroid';
+        callback({ requestHeaders: details.requestHeaders });
+        return;
+      } else if (url.includes('www.nugs.net')) {
+        // Dashboard HTML page scraping — send a realistic Chrome browser UA so
+        // nugs.net doesn't detect us as a bot and return HTTP 410.
+        details.requestHeaders['User-Agent'] =
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+        details.requestHeaders['Accept'] =
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8';
+        details.requestHeaders['Accept-Language'] = 'en-US,en;q=0.9';
+      } else if (url.includes('bigriver/') || url.includes('bigriver')) {
+        // Nugs CDN audio streams
+        details.requestHeaders['User-Agent'] = 'nugsnetAndroid';
+        details.requestHeaders['Origin']  = 'https://play.nugs.net';
+        details.requestHeaders['Referer'] = 'https://play.nugs.net/';
+      } else {
+        // Nugs API endpoints (streamapi, id, subscriptions)
+        details.requestHeaders['User-Agent'] =
+          'NugsNet/3.26.724 (Android; 7.1.2; Asus; ASUS_Z01QD; Scale/2.0; en)';
+        details.requestHeaders['Origin']  = 'https://play.nugs.net';
+        details.requestHeaders['Referer'] = 'https://play.nugs.net/';
+      }
 
-    if (target.includes('nugs.net') || target.includes('nugs.com')) {
-      details.requestHeaders['Origin']  = 'https://play.nugs.net';
-      details.requestHeaders['Referer'] = 'https://play.nugs.net/';
-    } else if (target.includes('akamaized.net') || target.includes('akamaihd.net')) {
-      // Akamai needs Referer for token validation but blocks spoofed Origins
-      details.requestHeaders['Referer'] = 'https://play.nugs.net/';
-      delete details.requestHeaders['Origin'];
+      callback({ requestHeaders: details.requestHeaders });
     }
-
-    callback({ requestHeaders: details.requestHeaders });
-  };
-
-  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, spoofHeaders);
-  const nugsSession = session.fromPartition('persist:nugs');
-  if (nugsSession) nugsSession.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, spoofHeaders);
+  );
 
   // HLS live-stream interceptor — catches nugs webcasts before the <audio>
   // element tries to play them natively.  We only block resourceType 'media'
@@ -839,36 +930,6 @@ ipcMain.on('open-url', (_, url) => {
   if (url.startsWith('http://') || url.startsWith('https://')) {
     require('electron').shell.openExternal(url);
   }
-});
-
-// ── Nugs login portal ─────────────────────────────────────────────────────
-// Opens a visible BrowserWindow on the persist:nugs partition so the user
-// can log in to play.nugs.net.  Because it shares the ghost's cookie jar,
-// clearance and session cookies are immediately available to the scraper.
-ipcMain.on('show-nugs-login', () => {
-  const authWin = new BrowserWindow({
-    width:             500,
-    height:            750,
-    title:             'Nugs.net — Sign In',
-    autoHideMenuBar:   true,
-    webPreferences: {
-      partition:        'persist:nugs',
-      nodeIntegration:  false,
-      contextIsolation: true,
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    },
-  });
-
-  authWin.loadURL('https://play.nugs.net/login');
-
-  // Auto-close once the user lands on a post-login page
-  authWin.webContents.on('did-navigate', (_, url) => {
-    if (url.includes('/home') || url.includes('/library') || url.includes('/watch')) {
-      setTimeout(() => { if (!authWin.isDestroyed()) authWin.close(); }, 1000);
-    }
-  });
 });
 
 // ── Last.fm IPC ───────────────────────────────────────────────────────────
