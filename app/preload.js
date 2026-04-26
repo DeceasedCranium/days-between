@@ -22,4 +22,5 @@ contextBridge.exposeInMainWorld('ipc', {
   lfmGetSession:(token)                   => ipcRenderer.invoke('lastfm:get-session', token),
   lfmNowPlaying:(p)                       => ipcRenderer.invoke('lastfm:now-playing', p),
   lfmScrobble:  (p)                       => ipcRenderer.invoke('lastfm:scrobble', p),
+  downloadTrack:(payload)                 => ipcRenderer.invoke('download-track', payload),
 });

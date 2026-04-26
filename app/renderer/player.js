@@ -1,5 +1,5 @@
 /* ── player.js — audio engine, player UI, overlay, queue, cast ─── */
-import { $, fmt, esc, castContentType, artistColor, showToast, shuffle, safeInnerHTML } from './utils.js';
+import { $, fmt, esc, castContentType, artistColor, showToast, shuffle, safeInnerHTML, getAverageRGB } from './utils.js';
 import { state, settings, store, tapes, nugsAuth } from './state.js';
 import { nugsApi } from './api.js';
 import { lfm } from './lastfm.js';
@@ -7,6 +7,20 @@ import { audio, preloadAudio, engine, CROSSFADE_SECS, getPrimaryElement } from '
 import { initEq, setBypass, isBypassed } from './eq-engine.js';
 
 export { audio, preloadAudio }; // re-export so existing importers (app.js) don't change
+
+// Main-process tells us to release any active audio stream before quit.
+// Critical for Nugs: if the <audio> element dies without pause + src clear,
+// the upstream session lock can linger and lock the user's account out of
+// the website too. Best-effort — we have ~250ms before the process exits.
+try {
+  window.ipc?.on?.('app:release-audio', () => {
+    try {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    } catch (err) { console.warn('[release-audio]', err); }
+  });
+} catch {}
 
 export let playing = false;
 export function setPlaying(v) { playing = v; }
@@ -58,6 +72,11 @@ export function setPlayerArt(artist, artUrl, show) {
     img.alt        = '';
     const fallbackBg   = artistColor(artist?.name ?? '');
     const fallbackInit = (artist?.name ?? '?')[0].toUpperCase();
+    img.crossOrigin = 'anonymous';
+    img.addEventListener('load', () => {
+      const rgb = getAverageRGB(img);
+      if (rgb) document.documentElement.style.setProperty('--track-color', rgb);
+    });
     img.addEventListener('error', () => {
       el.innerHTML   = '';
       const span     = document.createElement('span');
@@ -65,12 +84,14 @@ export function setPlayerArt(artist, artUrl, show) {
       span.textContent = fallbackInit;
       el.appendChild(span);
       el.style.background = fallbackBg;
+      document.documentElement.style.removeProperty('--track-color');
     });
     el.innerHTML        = '';
     el.style.background = '';
     el.appendChild(img);
     img.src = url; // assign after attaching so error event fires reliably
   } else {
+    document.documentElement.style.removeProperty('--track-color');
     el.style.background = artistColor(artist?.name ?? '');
     const name  = esc(artist?.name ?? '');
     const date  = esc(show?.display_date ?? '');
@@ -144,6 +165,14 @@ export async function nugsResolveAndPlay(track, artist, show) {
 }
 
 export async function preloadNextNugsStream() {
+  // Disabled: Nugs enforces a single-active-stream policy per account, and an
+  // extra streamUrl() call per track was causing the upstream rate limiter to
+  // flag our account as "too many concurrent devices" — locking out playback
+  // until the session timed out. Resolution happens on-demand at play time
+  // instead. If we ever want to re-enable this, gate it behind a setting and
+  // only fire when the queue has been idle for several seconds.
+  return;
+  /* eslint-disable no-unreachable */
   const nextIdx = state.queueIdx + 1;
   if (nextIdx >= state.queue.length) return;
   const next = state.queue[nextIdx];
@@ -152,6 +181,7 @@ export async function preloadNextNugsStream() {
     const url = await nugsApi.streamUrl(next._nugs_trackId);
     if (url) next.stream_url = url;
   } catch { /* silent — will retry on actual play */ }
+  /* eslint-enable no-unreachable */
 }
 
 /* ── Player object ───────────────────────────────── */

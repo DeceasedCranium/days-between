@@ -190,38 +190,53 @@ function dedupeByUrl(cards) {
 }
 
 export async function scrapeLive() {
-  // play.nugs.net /watch — the dedicated web player live/VOD hub
-  const html    = await fetchPage(`${BASE}/watch`);
-  const doc     = parseDoc(html);
-  const raw     = extractStructuralCards(doc, true);
-  const results = dedupeByUrl(raw);
+  const ind = document.getElementById('scraperIndicator');
+  if (ind) ind.style.display = 'inline-block';
+  try {
+    // play.nugs.net /watch — the dedicated web player live/VOD hub
+    const html    = await fetchPage(`${BASE}/watch`);
+    const doc     = parseDoc(html);
+    const raw     = extractStructuralCards(doc, true);
+    const results = dedupeByUrl(raw);
 
-  if (!results.length) {
-    console.warn('[nugs-scraper] scrapeLive: 0 results. Body HTML (first 6000):');
-    console.warn(doc.body?.innerHTML?.slice(0, 6000));
-  } else {
-    console.info(`[nugs-scraper] scrapeLive: ${results.length} unique shows (${raw.length} raw)`);
+    if (!results.length) {
+      console.warn('[nugs-scraper] scrapeLive: 0 results. Body HTML (first 6000):');
+      console.warn(doc.body?.innerHTML?.slice(0, 6000));
+    } else {
+      console.info(`[nugs-scraper] scrapeLive: ${results.length} unique shows (${raw.length} raw)`);
+    }
+    return results;
+  } finally {
+    if (ind) ind.style.display = 'none';
   }
-  return results;
 }
 
 export async function scrapeRecent() {
-  // play.nugs.net /watch/livestreams/recent — the dedicated recent livestreams page.
-  const html    = await fetchPage(`${BASE}/watch/livestreams/recent`);
-  const doc     = parseDoc(html);
-  const raw     = extractStructuralCards(doc, false);
-  const results = dedupeByUrl(raw);
+  const ind = document.getElementById('scraperIndicator');
+  if (ind) ind.style.display = 'inline-block';
+  try {
+    // play.nugs.net /watch/livestreams/recent — the dedicated recent livestreams page.
+    const html    = await fetchPage(`${BASE}/watch/livestreams/recent`);
+    const doc     = parseDoc(html);
+    const raw     = extractStructuralCards(doc, false);
+    const results = dedupeByUrl(raw);
 
-  if (!results.length) {
-    console.warn('[nugs-scraper] scrapeRecent: 0 results. Body HTML (first 6000):');
-    console.warn(doc.body?.innerHTML?.slice(0, 6000));
-  } else {
-    console.info(`[nugs-scraper] scrapeRecent: ${results.length} unique shows (${raw.length} raw)`);
+    if (!results.length) {
+      console.warn('[nugs-scraper] scrapeRecent: 0 results. Body HTML (first 6000):');
+      console.warn(doc.body?.innerHTML?.slice(0, 6000));
+    } else {
+      console.info(`[nugs-scraper] scrapeRecent: ${results.length} unique shows (${raw.length} raw)`);
+    }
+    return results;
+  } finally {
+    if (ind) ind.style.display = 'none';
   }
-  return results;
 }
 
 export async function scrapeStash() {
+  const ind = document.getElementById('scraperIndicator');
+  if (ind) ind.style.display = 'inline-block';
+  try {
   // play.nugs.net /library/ is the new My Library hub.
   // Ghost window does a full scroll+harvest and returns result.stashItems JSON.
   // We fall through to HTML parse only if stashItems is absent.
@@ -288,6 +303,9 @@ export async function scrapeStash() {
     console.warn(doc.body?.innerHTML?.slice(0, 6000));
   }
   return results;
+  } finally {
+    if (ind) ind.style.display = 'none';
+  }
 }
 
 /** Convert a URL slug like "billy-strings-concerts-live-downloads-…" into "Billy Strings" */
@@ -327,6 +345,9 @@ function detectLoginRequired(doc) {
 
 
 export async function scrapeArtists() {
+  const ind = document.getElementById('scraperIndicator');
+  if (ind) ind.style.display = 'inline-block';
+  try {
   // Kept for legacy callers — now delegates to the '#' letter page
   // (which covers all artists on a fresh /browse/artists/ load).
   // Primary entry point for the sidebar is scrapeArtistsByLetter().
@@ -460,6 +481,9 @@ export async function scrapeArtists() {
 
   console.info(`[nugs-scraper] scrapeArtists: ${artists.length} unique artists extracted`);
   return artists.sort((a, b) => a.name.localeCompare(b.name));
+  } finally {
+    if (ind) ind.style.display = 'none';
+  }
 }
 
 /* ── Resolve a nugs show/product page URL to a container ID ─────── */

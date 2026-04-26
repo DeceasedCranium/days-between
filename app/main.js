@@ -1,8 +1,15 @@
 const {
   app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut, Notification,
+  session,
 } = require('electron');
 const path = require('path');
+const fs   = require('fs');
+const { pipeline } = require('node:stream/promises');
 const cast = require('./cast');
+
+// Local archival download directory — populated in app.whenReady() once
+// app.getPath('music') is available. Module-scoped so the IPC handler can read it.
+let _downloadDir = null;
 
 // Must be called before app.whenReady() — enables Chromium's built-in
 // Media Router so Cast devices appear in the system device picker.
@@ -752,9 +759,18 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
 
+  // ── Local archival storage directory ────────────────────────────────────────
+  // Tracks downloaded by the Download Bridge land here. Created once on boot
+  // so the IPC handler can assume it always exists.
+  try {
+    _downloadDir = path.join(app.getPath('music'), 'Days Between');
+    fs.mkdirSync(_downloadDir, { recursive: true });
+  } catch (err) {
+    console.error('[download-bridge] failed to create storage directory:', err);
+  }
+
   // Nugs.net CORS fix — inject required headers for nugs API/stream requests only
   const { session } = require('electron');
-  const nugsSes = session.fromPartition('persist:nugs');
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: [
         '*://streamapi.nugs.net/*',
@@ -885,6 +901,21 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+// Tell the renderer to release any active audio stream BEFORE the process
+// exits. Nugs enforces a single-active-stream policy per account; if we let
+// the audio element die ungracefully (no pause / no src clear), the upstream
+// session lock can linger for minutes — locking the user out of their account
+// on the website too. We give the renderer ~250ms to clear audio.src, then
+// proceed with shutdown.
+let _shuttingDown = false;
+app.on('before-quit', e => {
+  if (_shuttingDown || !win || win.isDestroyed()) return;
+  _shuttingDown = true;
+  e.preventDefault();
+  try { win.webContents.send('app:release-audio'); } catch {}
+  setTimeout(() => app.quit(), 250);
+});
+
 // Window controls
 ipcMain.on('wctl', (_, cmd) => {
   if (!win) return;
@@ -1013,6 +1044,69 @@ ipcMain.handle('cast:stop',  async () => {
   cast.stop();
   win?.webContents.send('cast-status', { state: 'DISCONNECTED' });
   return { ok: true };
+});
+
+// ── Local archival download bridge ──────────────────────────────────────────
+// Streams audio at `url` straight to disk under
+//   <Music>/Days Between/[<subdir>/]<filename>
+//
+// `mode === 'nugs'` routes through Electron's `net.fetch` bound to the
+// `persist:nugs` session — the SAME partition the ghost scraper uses — so
+// cookies and TLS state are mirrored. We resolve the partition LAZILY (only
+// when a nugs download is actually requested) to avoid eagerly initialising
+// it at startup.
+//
+// Path-safety: each filename and subdir segment is sanitized to strip
+// separators, control chars, and `..` so a malicious or odd track name can't
+// break out of the storage directory.
+function _segment(s) {
+  return String(s ?? '')
+    .replace(/[\/\\\0:*?"<>|]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.+$/, '');
+}
+
+ipcMain.handle('download-track', async (_, { url, filename, subdir, mode } = {}) => {
+  try {
+    if (!_downloadDir) throw new Error('storage directory not initialized');
+    if (!url || !filename) throw new Error('url and filename are required');
+
+    const safeName = _segment(filename) || 'track';
+    const cleanSubdir = String(subdir ?? '')
+      .split(/[\/\\]/)
+      .map(_segment)
+      .filter(seg => seg && seg !== '..' && seg !== '.')
+      .join(path.sep);
+
+    const targetDir = cleanSubdir ? path.join(_downloadDir, cleanSubdir) : _downloadDir;
+    fs.mkdirSync(targetDir, { recursive: true });
+    const filePath = path.join(targetDir, safeName);
+
+    let res;
+    if (mode === 'nugs') {
+      const { session } = require('electron');
+      const nugsSes = session.fromPartition('persist:nugs');
+      res = await nugsSes.fetch(url, {
+        headers: {
+          'User-Agent': app.userAgentFallback,
+          'Referer':    'https://play.nugs.net/',
+          'Origin':     'https://play.nugs.net',
+        },
+      });
+    } else {
+      res = await fetch(url);
+    }
+    if (!res.ok || !res.body) {
+      throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
+    }
+    await pipeline(res.body, fs.createWriteStream(filePath));
+
+    return { ok: true, filePath };
+  } catch (err) {
+    console.error('[download-track]', err);
+    return { ok: false, error: err.message };
+  }
 });
 
 // ── MPRIS (Linux media controls) ────────────────────────────────────────────

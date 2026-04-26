@@ -16,6 +16,7 @@
     <div class="titlebar-left">
       <button class="tb-nav-btn" id="btnBack"  title="Back (Alt+←)"    disabled>&#8592;</button>
       <button class="tb-nav-btn" id="btnFwd"   title="Forward (Alt+→)"  disabled>&#8594;</button>
+      <button class="tb-nav-btn" id="btnHome"  title="Home">&#8962;</button>
       <div class="titlebar-logo">
         <svg width="13" height="10" viewBox="0 0 22 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="0.6" y="0.6" width="20.8" height="14.8" rx="2.4" stroke="rgba(255,255,255,0.9)" stroke-width="1.2"/>
@@ -29,6 +30,7 @@
         </svg>
       </div>
       <span class="titlebar-name">DAYS BETWEEN</span>
+      <span id="scraperIndicator" class="titlebar-scraper" style="display:none;">⟳ Scraping</span>
     </div>
     <div class="titlebar-controls">
       <button class="tb-icon-btn" id="btnHelp"     title="Keyboard shortcuts (?)">&#63;</button>
@@ -342,6 +344,31 @@
 
   <!-- Toast -->
   <div id="toast" class="toast"></div>
+
+  <!-- Archive progress pill — fixed bottom-right, visible during downloadFullShow -->
+  <div id="archiveStatus" class="archive-status" style="display:none">
+    <div class="archive-status-row">
+      <div class="archive-status-title" id="archiveStatusTitle">Archiving…</div>
+      <div class="archive-status-count" id="archiveStatusCount">0/0</div>
+    </div>
+    <div class="archive-status-bar"><div class="archive-status-fill" id="archiveStatusFill"></div></div>
+    <div class="archive-status-label" id="archiveStatusLabel"></div>
+  </div>
+
+  <!-- Generic confirm dialog with "don't show again" — used for Nugs download warning -->
+  <div id="confirmDialog" class="confirm-dialog" style="display:none" role="dialog" aria-modal="true">
+    <div class="confirm-dialog-card">
+      <div class="confirm-dialog-title" id="confirmDialogTitle">Confirm</div>
+      <div class="confirm-dialog-body" id="confirmDialogBody"></div>
+      <label class="confirm-dialog-skip">
+        <input type="checkbox" id="confirmDialogSkip"> Don't show this again
+      </label>
+      <div class="confirm-dialog-actions">
+        <button class="action-btn" id="confirmDialogCancel">Cancel</button>
+        <button class="action-btn primary" id="confirmDialogOk">Continue</button>
+      </div>
+    </div>
+  </div>
 
   <script src="localforage.min.js"></script>
   <script src="hls.min.js"></script>

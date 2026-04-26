@@ -39,6 +39,86 @@ export function showToast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('visible'), 2200);
 }
 
+/**
+ * Custom confirm dialog with optional "Don't show again" checkbox.
+ * Resolves to { ok: boolean, skipFuture: boolean }.
+ *
+ * @param {Object}  opts
+ * @param {string}  opts.title
+ * @param {string}  opts.body            Plain text — set as textContent (no HTML injection).
+ * @param {string}  [opts.okLabel="Continue"]
+ * @param {string}  [opts.cancelLabel="Cancel"]
+ * @param {boolean} [opts.allowSkip=true]  Show the "don't show again" checkbox
+ */
+export function confirmDialog(opts = {}) {
+  const {
+    title       = 'Confirm',
+    body        = '',
+    okLabel     = 'Continue',
+    cancelLabel = 'Cancel',
+    allowSkip   = true,
+  } = opts;
+
+  return new Promise(resolve => {
+    const dlg     = $('confirmDialog');
+    const skipBox = $('confirmDialogSkip');
+    const okBtn   = $('confirmDialogOk');
+    const cancel  = $('confirmDialogCancel');
+
+    $('confirmDialogTitle').textContent = title;
+    $('confirmDialogBody').textContent  = body;
+    okBtn.textContent     = okLabel;
+    cancel.textContent    = cancelLabel;
+    skipBox.checked       = false;
+    skipBox.parentElement.style.display = allowSkip ? '' : 'none';
+    dlg.style.display     = 'flex';
+
+    const finish = ok => {
+      dlg.style.display = 'none';
+      okBtn.removeEventListener('click', onOk);
+      cancel.removeEventListener('click', onCancel);
+      document.removeEventListener('keydown', onKey);
+      resolve({ ok, skipFuture: !!skipBox.checked });
+    };
+    const onOk     = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey    = e => {
+      if (e.key === 'Escape') onCancel();
+      else if (e.key === 'Enter') onOk();
+    };
+
+    okBtn.addEventListener('click', onOk);
+    cancel.addEventListener('click', onCancel);
+    document.addEventListener('keydown', onKey);
+    okBtn.focus();
+  });
+}
+
+/**
+ * Archive progress pill — fixed bottom-right indicator that updates as
+ * archive.js streams tracks to disk.  Returns an opaque controller.
+ */
+export function showArchiveStatus(title) {
+  const root  = $('archiveStatus');
+  const tEl   = $('archiveStatusTitle');
+  const cEl   = $('archiveStatusCount');
+  const fEl   = $('archiveStatusFill');
+  const lEl   = $('archiveStatusLabel');
+  tEl.textContent = title;
+  cEl.textContent = '0/0';
+  fEl.style.width = '0%';
+  lEl.textContent = '';
+  root.style.display = '';
+  return {
+    update(cur, total, label = '') {
+      cEl.textContent = `${cur}/${total}`;
+      fEl.style.width = total > 0 ? `${Math.min(100, (cur / total) * 100)}%` : '0%';
+      lEl.textContent = label;
+    },
+    hide() { root.style.display = 'none'; },
+  };
+}
+
 // Safe imperative DOM builder — no innerHTML
 export function createEl(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -95,4 +175,19 @@ export function shuffle(arr) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+// Draw the image to a 1×1 canvas so the browser averages all pixels,
+// returning an "rgb(r,g,b)" string. Returns null on CORS or decode errors.
+export function getAverageRGB(imgEl) {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1; canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(imgEl, 0, 0, 1, 1);
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    return `rgb(${r},${g},${b})`;
+  } catch {
+    return null;
+  }
 }

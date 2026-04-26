@@ -590,7 +590,7 @@ export function viewSettings() {
     </div>`;
 
   safeInnerHTML($('contentInner'), `
-    <div class="section-header"><div><div class="section-title">Settings</div></div></div>
+    <div class="section-header"><div><div class="section-title">Settings</div></div><button class="action-btn" id="btnSettingsClose" title="Close Settings" style="padding: 4px 10px; font-size: 14px;">✕</button></div>
 
     <div class="settings-section">
       <div class="settings-section-title">Appearance</div>
@@ -1011,4 +1011,11 @@ export function viewSettings() {
   $('btnClearHistory').addEventListener('click', () => {
     if (confirm('Clear all play history?')) { localStorage.removeItem('db-history'); showToast('History cleared'); }
   });
+
+  // ── Settings close button ─────────────────────────
+  if ($('btnSettingsClose')) {
+    $('btnSettingsClose').addEventListener('click', () => {
+      nav.back();
+    });
+  }
 }

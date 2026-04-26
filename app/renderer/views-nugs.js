@@ -1,6 +1,6 @@
 /* ── views-nugs.js — Nugs.net browsing views ──────────────────── */
-import { $, esc, fmt, artistColor, showToast, shuffle } from './utils.js';
-import { state, nav, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
+import { $, esc, fmt, artistColor, showToast, shuffle, confirmDialog } from './utils.js';
+import { state, nav, settings, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
 import { nugsApi } from './api.js';
 import { injectArtistBio, lastfmArtistImage } from './lastfm.js';
 import { nugsResolveAndPlay, handleNugsAuthError, setPlayerArt } from './player.js';
@@ -10,6 +10,7 @@ import { startLiveStream } from './video-player.js';
 // ES module circular imports are safe here — functions are only called
 // inside event handlers and async functions, never at module init time.
 import { setBreadcrumb, fadeIn, renderArtists } from './views-core.js';
+import { downloadFullShow } from './archive.js';
 
 /* ── Content container helper ────────────────────── */
 // When the Nugs source tab is active all views must write to #nugsContentInner
@@ -235,6 +236,13 @@ export async function nugsViewRelease(artist, containerId) {
     const isVideoRelease    = !!(containerVideoUrl || container.videoChapters
       || container.containerTypeStr?.toLowerCase().includes('video'));
 
+    // A release can be tagged as "video" upstream (containerTypeStr includes
+    // "video", or has a videoURL) but still ship audio tracks alongside the
+    // video. We render BOTH buttons in that case rather than hiding Play All.
+    const audioTrackCount = tracks.filter(t =>
+      !(t.videoProduct || t.mp4Product || t.videoondemandProduct)).length;
+    const hasAudioTracks = audioTrackCount > 0;
+
     const normTracks = tracks.map((t, i) => ({
       uuid:              `nugs-${containerId}-${t.trackID ?? i}`,
       title:             t.songTitle ?? t.title ?? `Track ${i + 1}`,
@@ -259,14 +267,16 @@ export async function nugsViewRelease(artist, containerId) {
             ${venue ? `<div class="show-venue-full">${esc(venue)}</div>` : ''}
             <div class="show-tags">
               <span class="tag tag-green">nugs.net</span>
-              ${isVideoRelease
-                ? '<span class="tag">🎬 Video</span>'
-                : `<span class="tag">${normTracks.length} tracks</span>`}
+              ${hasAudioTracks ? `<span class="tag">${audioTrackCount} tracks</span>` : ''}
+              ${isVideoRelease ? '<span class="tag">🎬 Video</span>' : ''}
             </div>
             <div class="show-actions">
+              ${hasAudioTracks
+                ? `<button class="action-btn primary" id="btnNugsPlayAll">&#9654; Play All</button>` : ''}
               ${isVideoRelease
-                ? `<button class="action-btn primary" id="btnNugsWatchVideo">🎬 Watch Video</button>`
-                : `<button class="action-btn primary" id="btnNugsPlayAll">&#9654; Play All</button>`}
+                ? `<button class="action-btn${hasAudioTracks ? '' : ' primary'}" id="btnNugsWatchVideo">🎬 Watch Video</button>` : ''}
+              ${hasAudioTracks
+                ? `<button class="action-btn" id="btnNugsDownloadShow" title="Archive every track to your Music folder">⬇ Download Show</button>` : ''}
             </div>
           </div>
         </div>
@@ -365,7 +375,8 @@ export async function nugsViewRelease(artist, containerId) {
         };
         nugsResolveAndPlay(videoTrack, artist, playShow);
       });
-    } else {
+    }
+    if (hasAudioTracks) {
       $('btnNugsPlayAll')?.addEventListener('click', () => {
         const audioTracks = normTracks.filter(t => !t._nugs_video);
         if (!audioTracks.length) return;
@@ -375,6 +386,46 @@ export async function nugsViewRelease(artist, containerId) {
         state.artist   = artist;
         state.show     = playShow;
         nugsResolveAndPlay(state.queue[0], artist, playShow);
+      });
+
+      // ⬇ Download Show — archive nugs audio tracks. Synthetic source carries
+      // the _nugs flag so archive.js routes the IPC through the persisted
+      // Nugs session partition (with cookies + stealth headers).
+      $('btnNugsDownloadShow')?.addEventListener('click', async () => {
+        const btn = $('btnNugsDownloadShow');
+        if (!btn || btn.disabled) return;
+
+        // Warn before starting — Nugs allows only one active stream per
+        // account, so live playback will be paused for the duration of the
+        // archive run. User can opt out of seeing this dialog again.
+        if (!settings.getKey('skipNugsDownloadWarning', false)) {
+          const r = await confirmDialog({
+            title: 'Download Nugs show?',
+            body:  'Nugs only allows one active stream per account, so any current playback will pause while the download runs. Audio will resume automatically when the archive completes.',
+            okLabel: 'Download',
+          });
+          if (!r.ok) return;
+          if (r.skipFuture) settings.setKey('skipNugsDownloadWarning', true);
+        }
+
+        btn.disabled = true;
+        const orig = btn.textContent;
+        const audioTracks = normTracks.filter(t => !t._nugs_video);
+        const synthSource = { _nugs: true, tracks: audioTracks };
+        const coverUrl = playShow._artData ?? showArtUrl ?? artist._wikiImg ?? null;
+        try {
+          await downloadFullShow(artist, playShow, synthSource, {
+            coverUrl,
+            onProgress: (cur, total) => { btn.textContent = `Archiving… ${cur}/${total}`; },
+            onError:    (err) => console.warn('[btnNugsDownloadShow] track error:', err),
+          });
+        } catch (err) {
+          console.error('[btnNugsDownloadShow] fatal:', err);
+          showToast(`Archive failed: ${err.message ?? err}`);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
       });
     }
   } catch (e) {

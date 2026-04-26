@@ -155,10 +155,16 @@ async function init() {
     // Ensure the main content pane is visible — source-specific panes step aside
     $('appBody')?.classList.remove('mixlr-active');
     const mi = $('mixlrPane');         if (mi) mi.style.display = 'none';
-    const ci = $('contentInner');      if (ci) ci.style.display = '';
+    const ci = $('contentInner');      if (ci) ci.style.display = 'block';
     const ni = $('nugsContentInner');  if (ni) ni.style.display = 'none';
     renderArtists([]);
     viewSettings();
+  });
+
+  // ── Home button ───────────────────────────────────────────────────────────
+  $('btnHome').addEventListener('click', () => {
+    activateSource('relisten');
+    viewWelcome();
   });
 
   // ── Diagnostic click logger — identifies what element captures clicks ──────
@@ -257,6 +263,9 @@ async function init() {
     btn.classList.toggle('active', btn.dataset.source === sidebarSource);
     btn.addEventListener('click', () => activateSource(btn.dataset.source));
   });
+
+  // Allow other modules (e.g. views-core runSearch) to switch source without a circular import
+  window.addEventListener('days-between:activate-source', e => activateSource(e.detail));
 
   if (sidebarSource !== 'relisten') activateSource(sidebarSource);
 
