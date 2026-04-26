@@ -53,6 +53,11 @@ Grab the latest installer from the [**Releases page**](https://github.com/Deceas
 - **Tapes** — custom playlists you build manually
 - **Stats** — plays, artists, hours listened
 - **Last.fm scrobbling** — connect your account in Settings
+- **Local archival** — ⬇ Download Show button on any release saves the full
+  setlist plus cover art to `~/Music/Days Between/<Artist>/<Date - Venue>/`.
+  Sequential downloads with randomized human-cadence delays, persistent
+  bottom-right progress pill, and (for Nugs) auto-pause/resume of live
+  playback to respect the single-active-stream policy
 
 ### Interface
 - **Glass UI** — frosted-glass sidebar, titlebar, and floating player bar with backdrop-filter blur; transparent Electron window for native compositor integration
@@ -164,6 +169,7 @@ No telemetry, no accounts, no cloud sync.
 
 | Version | Highlights |
 |---------|-----------|
+| **v1.6.0** | Local archival: ⬇ Download Show button on Relisten and Nugs releases archives the full setlist + cover art to `~/Music/Days Between/<Artist>/<Date - Venue>/` with a persistent bottom-right progress pill. Nugs single-stream mitigations: auto-pause/resume of live playback during downloads (with opt-out confirm dialog), prefetch disabled, and audio teardown on app quit to free the upstream stream slot. Hybrid audio+video Nugs releases now render Play All alongside Watch Video. |
 | **v1.5.4** | Ghost scraper hardening: `did-fail-load` fast-fail on Cloudflare/network errors; Akamai header WAF bypass; unified vacuum harvest for virtualized DOM (sweep-scroll, step-scroll, IntersectionObserver fallback); class-selector extractors (`[class*="Tile"]`, `[class*="grid"]`); Referer/Origin spoof restored; img-anchor fallback for empty card sweeps |
 | **v1.5.3** | HLS buffer caps (30 s / 60 s max) applied to main audio player and video-player.js — prevents RAM exhaustion on long shows |
 | **v1.5.2** | Security hardening: `shell.openExternal` restricted to http/https; ghost scraper domain-gated to nugs.net only; dead `fetch-image` proxy removed; HLS buffer capped at 30/60 s to prevent RAM bloat |
@@ -193,7 +199,7 @@ This is a personal portfolio project built to learn Electron, HLS streaming, Web
 
 - **Nugs.net content** is only accessible to users with an active nugs.net subscription. This app authenticates using your own credentials and does not bypass, circumvent, or share any paywall.
 - **Relisten content** is served via the public Relisten API and is freely available per that project's terms.
-- This app does not redistribute, download, or cache any copyrighted audio or video. All streams are fetched live from the providers' own CDNs.
+- All streams are fetched live from the providers' own CDNs. The optional **Local archival** feature saves files to your own machine for personal offline listening only — it does not redistribute, share, or upload anything. Relisten recordings are taper/community sourced and freely distributable per the Relisten terms; Nugs.net downloads remain bound by your subscription's terms of use.
 
 Use of this software is solely your responsibility. Review each service's terms before use.
 
