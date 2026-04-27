@@ -1,6 +1,6 @@
 {
   "name": "days-between",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Days Between — Live music streaming desktop app, powered by Relisten",
   "main": "app/main.js",
   "scripts": {
@@ -20,8 +20,8 @@
     "electron-builder": "^26.8.1"
   },
   "build": {
-    "appId": "com.relisten.desktop",
-    "productName": "Relisten",
+    "appId": "com.daysbetween.desktop",
+    "productName": "Days Between",
     "files": [
       "app/**/*",
       "assets/**/*",

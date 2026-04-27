@@ -15,7 +15,7 @@ Grab the latest installer from the [**Releases page**](https://github.com/Deceas
 | Platform | File | Notes |
 |----------|------|-------|
 | macOS (Apple Silicon) | `.dmg` | Open DMG, drag to Applications |
-| Windows | `Relisten Setup …exe` (installer) or `Relisten …exe` (portable) | Run the installer |
+| Windows | `Days Between Setup …exe` (installer) or `Days Between …exe` (portable) | Run the installer |
 | Linux | `.AppImage` | `chmod +x`, then run |
 | Linux (Debian/Ubuntu) | `.deb` | `sudo dpkg -i` |
 
@@ -169,6 +169,7 @@ No telemetry, no accounts, no cloud sync.
 
 | Version | Highlights |
 |---------|-----------|
+| **v1.6.1** | Rebrand build artifacts to "Days Between" — DMG, AppImage, NSIS installer and portable EXE now ship under the project name (was "Relisten"). App ID changed to `com.daysbetween.desktop`. No code/feature changes vs. v1.6.0. |
 | **v1.6.0** | Local archival: ⬇ Download Show button on Relisten and Nugs releases archives the full setlist + cover art to `~/Music/Days Between/<Artist>/<Date - Venue>/` with a persistent bottom-right progress pill. Nugs single-stream mitigations: auto-pause/resume of live playback during downloads (with opt-out confirm dialog), prefetch disabled, and audio teardown on app quit to free the upstream stream slot. Hybrid audio+video Nugs releases now render Play All alongside Watch Video. |
 | **v1.5.4** | Ghost scraper hardening: `did-fail-load` fast-fail on Cloudflare/network errors; Akamai header WAF bypass; unified vacuum harvest for virtualized DOM (sweep-scroll, step-scroll, IntersectionObserver fallback); class-selector extractors (`[class*="Tile"]`, `[class*="grid"]`); Referer/Origin spoof restored; img-anchor fallback for empty card sweeps |
 | **v1.5.3** | HLS buffer caps (30 s / 60 s max) applied to main audio player and video-player.js — prevents RAM exhaustion on long shows |
