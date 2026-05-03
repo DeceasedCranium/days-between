@@ -242,6 +242,16 @@ export const nugsAuth = {
   get()   { return _cache['db-nugs-auth'] ?? null; },
   set(v)  { _set('db-nugs-auth', v); },
   clear() { _remove('db-nugs-auth'); },
+  // True if we have *any* access token cached — this is what UI gates use
+  // to decide whether to show signed-in or sign-in views. Token-aging is
+  // handled separately: a background refresh loop keeps `expires_at` fresh,
+  // and on a 4xx from id.nugs.net `nugsApi.refresh()` proactively clears
+  // auth and dispatches a `nugs:logged-out` event.
+  hasToken() {
+    return !!this.get()?.access_token;
+  },
+  // Stricter check — token present AND not past its JWT `exp` claim. Used
+  // by the refresh interval to decide whether to call `nugsApi.refresh()`.
   isValid() {
     const a = this.get();
     return !!(a?.access_token && a?.expires_at && Date.now() < a.expires_at);

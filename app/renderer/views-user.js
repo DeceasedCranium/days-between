@@ -543,7 +543,7 @@ export function viewSettings() {
   const savedEqPreset = settings.getKey('eqPreset', null);
 
   // Build nugs section content based on auth state
-  const nugsSection = nugsAuth.isValid() ? (() => {
+  const nugsSection = nugsAuth.hasToken() ? (() => {
     const a = nugsAuth.get();
     const savedArtists = nugsArtistStore.get();
     return `
@@ -936,7 +936,7 @@ export function viewSettings() {
   }
 
   // ── Nugs controls ────────────────────────────────
-  if (nugsAuth.isValid()) {
+  if (nugsAuth.hasToken()) {
     $('btnNugsSignOut').addEventListener('click', () => {
       nugsAuth.clear(); showToast('Signed out of nugs.net');
       renderArtists(state.filteredArtists); viewSettings();

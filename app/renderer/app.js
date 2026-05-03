@@ -290,13 +290,35 @@ async function init() {
   // Nugs sidebar shows Favorites instantly from localStorage — no boot scrape needed.
   // Artists are loaded on-demand when the user clicks a letter in the A-Z grid.
 
-  // Nugs token refresh — every 5 min, refresh if within 30 min of expiry
+  // One-shot boot refresh — older app versions stored a synthetic
+  // 10-hour `expires_at` that doesn't match the JWT's real `exp` claim, so
+  // previously-signed-in users may launch with a stale `isValid()` even
+  // though their refresh_token still works. Try a refresh once on boot.
+  (async () => {
+    const a = nugsAuth.get();
+    if (a?.refresh_token && !nugsAuth.isValid()) {
+      const { nugsApi } = await import('./api.js');
+      await nugsApi.refresh();
+    }
+  })();
+
+  // Nugs token refresh — every 5 min, refresh if within 30 min of expiry.
+  // `nugsApi.refresh()` itself is responsible for clearing auth on a 4xx
+  // (refresh-token rejected) and dispatching `nugs:logged-out` so the
+  // Settings UI can flip to the sign-in form on its next render.
   setInterval(async () => {
     const { nugsApi } = await import('./api.js');
     const auth = nugsAuth.get();
     if (!auth?.refresh_token) return;
     if (auth.expires_at - Date.now() < 30 * 60 * 1000) await nugsApi.refresh();
   }, 5 * 60 * 1000);
+
+  // If the refresh loop (or a 401 retry) clears auth, surface it to the user
+  // and re-render Settings if it's currently the active view.
+  window.addEventListener('nugs:logged-out', () => {
+    showToast('Nugs session expired — please sign in again');
+    if (nav.history[nav.cursor]?.fn === viewSettings) viewSettings();
+  });
 }
 
 init();

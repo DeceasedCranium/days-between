@@ -42,6 +42,21 @@ export function parseNugsDate(s) {
   return new Date(`${yyyy}-${mm}-${dd}T${timePart}Z`).getTime() / 1000;
 }
 
+/** Decode the JWT payload (no signature verification) — used for `exp` and legacy fields. */
+function decodeJwt(token) {
+  try {
+    const seg = String(token ?? '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(seg.padEnd(seg.length + (4 - seg.length % 4) % 4, '=')));
+  } catch { return {}; }
+}
+
+/** Convert an access_token's `exp` claim → ms epoch. Falls back to a 1h window. */
+function expiryFromToken(token) {
+  const exp = Number(decodeJwt(token)?.exp);
+  if (Number.isFinite(exp) && exp > 0) return exp * 1000;
+  return Date.now() + 60 * 60 * 1000; // conservative fallback
+}
+
 export const nugsApi = {
   async login(email, password) {
     const body = new URLSearchParams({
@@ -59,12 +74,8 @@ export const nugsApi = {
     if (!r.ok) throw new Error('nugs:login_failed');
     const tokens = await r.json();
 
-    // Decode JWT payload for legacy fields (base64url, no signature verification needed)
-    let jwtPayload = {};
-    try {
-      const seg = tokens.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-      jwtPayload = JSON.parse(atob(seg.padEnd(seg.length + (4 - seg.length % 4) % 4, '=')));
-    } catch (err) { console.error('[api] JWT decode', err); }
+    // Decode JWT payload for legacy fields + the real `exp` claim
+    const jwtPayload = decodeJwt(tokens.access_token);
 
     const [userInfo, subsArr] = await Promise.all([
       fetch(`${NUGS_ID_URL}/connect/userinfo`, {
@@ -82,7 +93,7 @@ export const nugsApi = {
     nugsAuth.set({
       access_token:    tokens.access_token,
       refresh_token:   tokens.refresh_token,
-      expires_at:      Date.now() + 600 * 60 * 1000,
+      expires_at:      expiryFromToken(tokens.access_token),
       legacy_token:    jwtPayload.legacyToken  ?? '',
       legacy_uguid:    jwtPayload.legacyUguid  ?? '',
       user_id:         userInfo.sub            ?? '',
@@ -202,26 +213,44 @@ export const nugsApi = {
 
   async refresh() {
     const auth = nugsAuth.get();
-    if (!auth?.refresh_token) return;
+    if (!auth?.refresh_token) return { ok: false, reason: 'no_refresh_token' };
     const body = new URLSearchParams({
       client_id:     NUGS_CLIENT_ID,
       grant_type:    'refresh_token',
       refresh_token: auth.refresh_token,
     });
-    const r = await fetch(`${NUGS_ID_URL}/connect/token`, {
-      method:  'POST',
-      headers: { 'User-Agent': NUGS_UA, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    });
+    let r;
+    try {
+      r = await fetch(`${NUGS_ID_URL}/connect/token`, {
+        method:  'POST',
+        headers: { 'User-Agent': NUGS_UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+    } catch (err) {
+      // Network blip — keep cached token, caller can retry on next interval tick
+      console.warn('[nugs] refresh network error:', err);
+      return { ok: false, reason: 'network', err };
+    }
     if (r.ok) {
       const tokens = await r.json();
       nugsAuth.set({
         ...auth,
         access_token:  tokens.access_token,
         refresh_token: tokens.refresh_token ?? auth.refresh_token,
-        expires_at:    Date.now() + 600 * 60 * 1000,
+        expires_at:    expiryFromToken(tokens.access_token),
       });
+      return { ok: true };
     }
-    // Refresh failed — leave existing token rather than logging out
+    // 4xx from id.nugs.net — refresh token is invalid/expired. Log out so the
+    // Settings UI can prompt for re-auth instead of silently looping forever.
+    console.warn('[nugs] refresh rejected by server:', r.status);
+    if (r.status >= 400 && r.status < 500) {
+      nugsAuth.clear();
+      try {
+        window.dispatchEvent(new CustomEvent('nugs:logged-out', { detail: { reason: 'refresh_rejected' } }));
+      } catch {}
+      return { ok: false, reason: 'rejected', status: r.status };
+    }
+    return { ok: false, reason: 'server_error', status: r.status };
   },
 };
