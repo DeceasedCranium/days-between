@@ -142,6 +142,11 @@ export async function viewToday() {
   const dayOrd = day + (['th','st','nd','rd'][day % 10 > 3 || ~~(day % 100 / 10) === 1 ? 0 : day % 10] ?? 'th');
   setBreadcrumb([{ label: `On This Day — ${label}` }]);
   try {
+    // Same race as the welcome SOTD — wait briefly for state.artists so the
+    // resolveShowArtist uuid-fallback works on cold boots.
+    for (let i = 0; i < 30 && !state.artists?.length; i++) {
+      await new Promise(r => setTimeout(r, 100));
+    }
     const data  = await api.onDate(month, day);
     const shows = data.shows ?? data ?? [];
     if (!shows.length) {
@@ -155,7 +160,7 @@ export async function viewToday() {
       (byYear[yr] ??= []).push(s);
     }
     const years = Object.keys(byYear).sort((a, b) => b - a);
-    const totalArtists = new Set(shows.map(s => s.artist_slug)).size;
+    const totalArtists = new Set(shows.map(s => resolveShowArtist(s)?.slug).filter(Boolean)).size;
 
     safeInnerHTML($('contentInner'), `
       <div class="otd-hero">
@@ -173,11 +178,12 @@ export async function viewToday() {
           <div class="otd-year-label">${esc(yr)}</div>
           <div class="otd-year-shows">
             ${byYear[yr].map(s => {
-              const artist   = state.artists.find(a => a.slug === s.artist_slug) ?? { name: s.artist_name ?? s.artist_slug ?? '', slug: s.artist_slug ?? '' };
+              const artist = resolveShowArtist(s);
+              if (!artist?.slug) return ''; // skip un-resolvable shows
               const color    = artistColor(artist.name);
               const init     = esc((artist.name[0] ?? '?').toUpperCase());
               const imgStyle = artist.image_url ? `background-image:url('${esc(artist.image_url)}')` : `background:${color}`;
-              return `<div class="otd-row" data-slug="${esc(s.artist_slug ?? '')}" data-date="${esc(s.display_date)}">
+              return `<div class="otd-row" data-slug="${esc(artist.slug)}" data-date="${esc(s.display_date)}">
                 <div class="otd-avatar" style="${imgStyle}" data-name="${esc(artist.name)}">${artist.image_url ? '' : `<span>${init}</span>`}</div>
                 <div class="otd-info">
                   <div class="otd-artist-name">${esc(artist.name)}</div>
@@ -197,7 +203,8 @@ export async function viewToday() {
     fadeIn();
 
     $('otdTimeline').querySelectorAll('.otd-row').forEach(row => {
-      const artist = state.artists.find(a => a.slug === row.dataset.slug) ?? { name: row.dataset.slug, slug: row.dataset.slug };
+      const slug   = row.dataset.slug;
+      const artist = state.artists.find(a => a.slug === slug) ?? { name: slug, slug };
       row.addEventListener('click', e => {
         if (e.target.classList.contains('otd-play-btn')) return;
         state.artist = artist; viewShow(artist, row.dataset.date);
