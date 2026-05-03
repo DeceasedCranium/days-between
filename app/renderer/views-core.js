@@ -14,6 +14,36 @@ import { resolveArtistId } from './nugs-scraper.js';
 import { downloadFullShow } from './archive.js';
 
 
+/* ── Show → artist resolution ──────────────────────────────────────────────
+ * Different Relisten endpoints serialise the artist differently:
+ *   • /shows/on-date     → `show.artist = { slug, name, uuid, ... }` (nested)
+ *   • /trending/shows    → `show.artist_uuid` only — no nested artist, no slug
+ *   • /search            → `show.artist_slug` (flat string)
+ *
+ * Reading any single field directly leaves the others as `undefined`, which
+ * is how we ended up with `/api/v2/artists//shows/<date>` URLs (404). This
+ * helper walks all three shapes and falls back to the cached artist list to
+ * resolve a uuid → slug. Returns `{ slug, name, image_url, ... }` or null.
+ * ──────────────────────────────────────────────────────────────────────── */
+export function resolveShowArtist(show) {
+  if (!show) return null;
+  // Direct nested artist (on-date, search v3)
+  if (show.artist?.slug) {
+    const cached = state.artists.find(a => a.slug === show.artist.slug);
+    return cached ?? show.artist;
+  }
+  // Flat artist_slug (search v2, sotd payload)
+  if (show.artist_slug) {
+    return state.artists.find(a => a.slug === show.artist_slug)
+        ?? { name: show.artist_name ?? show.artist_slug, slug: show.artist_slug };
+  }
+  // UUID-only (trending v3) — only resolvable once state.artists is loaded
+  if (show.artist_uuid) {
+    return state.artists.find(a => a.uuid === show.artist_uuid) ?? null;
+  }
+  return null;
+}
+
 /* ── View helpers ────────────────────────────────── */
 export const showLoading = () => {
   $('contentInner').innerHTML = `
@@ -246,12 +276,18 @@ export async function viewWelcome() {
   // Show of the Day — deterministic daily pick from trending
   (async () => {
     try {
+      // Trending v3 only ships `artist_uuid` (no nested artist, no slug), so
+      // resolveShowArtist needs state.artists populated. viewWelcome runs
+      // before the artists fetch finishes — wait up to 3s for it to land.
+      for (let i = 0; i < 30 && !state.artists?.length; i++) {
+        await new Promise(r => setTimeout(r, 100));
+      }
       const today  = new Date().toISOString().slice(0, 10);
       const cached = JSON.parse(localStorage.getItem('sotd') || 'null');
       let sotd = (cached?.date === today) ? cached.show : null;
       if (!sotd) {
         const data  = await api.trending();
-        const shows = (data.shows ?? data ?? []).filter(s => s.artist_slug);
+        const shows = (data.shows ?? data ?? []).filter(s => resolveShowArtist(s));
         if (shows.length) {
           const seed = today.replace(/-/g, '');
           sotd = shows[parseInt(seed.slice(-4)) % shows.length];
@@ -259,9 +295,10 @@ export async function viewWelcome() {
         }
       }
       if (!sotd) { $('welcomeSotd').style.display = 'none'; return; }
-      const artist = state.artists.find(a => a.slug === sotd.artist_slug) || { name: sotd.artist_slug, slug: sotd.artist_slug };
+      const artist = resolveShowArtist(sotd);
+      if (!artist?.slug) { $('welcomeSotd').style.display = 'none'; return; }
       safeInnerHTML($('sotdContent'), `
-        <div class="sotd-card" data-slug="${esc(sotd.artist_slug)}" data-date="${esc(sotd.display_date)}">
+        <div class="sotd-card" data-slug="${esc(artist.slug)}" data-date="${esc(sotd.display_date)}">
           <div class="sotd-artist">${esc(artist.name)}</div>
           <div class="sotd-meta">${esc(sotd.display_date)}${sotd.venue?.name ? ' · ' + esc(sotd.venue.name) : ''}${sotd.venue?.location ? ', ' + esc(sotd.venue.location) : ''}</div>
           ${sotd.avg_rating ? `<div class="sotd-rating">${'★'.repeat(Math.round(sotd.avg_rating))} ${sotd.avg_rating.toFixed(1)}</div>` : ''}
@@ -277,6 +314,11 @@ export async function viewWelcome() {
   })();
 
   try {
+    // Same race as SOTD — wait for state.artists so resolveShowArtist can
+    // fall back to uuid-lookup if a payload only ships artist_uuid.
+    for (let i = 0; i < 30 && !state.artists?.length; i++) {
+      await new Promise(r => setTimeout(r, 100));
+    }
     const data  = await api.onDate(now.getMonth() + 1, now.getDate());
     const shows = (data.shows ?? data ?? []).slice(0, 20);
     if (!shows.length) {
@@ -284,8 +326,9 @@ export async function viewWelcome() {
       return;
     }
     safeInnerHTML($('welcomeOtd'), shows.map(s => {
-      const artist = state.artists.find(a => a.slug === s.artist_slug) || { name: s.artist_slug, slug: s.artist_slug };
-      return `<div class="otd-show-row" data-slug="${esc(s.artist_slug)}" data-date="${esc(s.display_date)}" style="margin-bottom:5px;padding:8px 12px">
+      const artist = resolveShowArtist(s);
+      if (!artist?.slug) return ''; // skip shows we can't resolve to a slug
+      return `<div class="otd-show-row" data-slug="${esc(artist.slug)}" data-date="${esc(s.display_date)}" style="margin-bottom:5px;padding:8px 12px">
         <div class="otd-artist" style="min-width:130px">${esc(artist.name)}</div>
         <div class="otd-year">${esc((s.display_date||'').slice(0,4))}</div>
         <div class="otd-venue">${esc(s.venue?.name??'')}</div>
@@ -293,7 +336,8 @@ export async function viewWelcome() {
     }).join(''));
     $('welcomeOtd').querySelectorAll('.otd-show-row').forEach(row =>
       row.addEventListener('click', () => {
-        const artist = state.artists.find(a => a.slug === row.dataset.slug) || { name: row.dataset.slug, slug: row.dataset.slug };
+        const slug = row.dataset.slug;
+        const artist = state.artists.find(a => a.slug === slug) || { name: slug, slug };
         state.artist = artist;
         viewShow(artist, row.dataset.date);
       }));
@@ -394,12 +438,11 @@ export async function runSearch(q, yearFrom, yearTo) {
     };
 
     const renderShowRow = (s, source) => {
-      const aName  = s.artist_name ?? s.artist_slug ?? '';
-      const artist = state.artists.find(a => a.slug === s.artist_slug) ?? { name: aName, slug: s.artist_slug ?? '', image_url: null };
+      const artist = resolveShowArtist(s) ?? { name: s.artist_name ?? s.artist_slug ?? '', slug: s.artist_slug ?? '', image_url: null };
       const color  = artistColor(artist.name);
       const imgSt  = artist.image_url ? `background-image:url('${esc(artist.image_url)}')` : `background:${color}`;
       const srcTag = source === 'nugs' ? '<span class="badge" style="background:var(--accent)">nugs</span>' : '';
-      return `<div class="sr-row" data-type="show" data-slug="${esc(s.artist_slug ?? '')}" data-date="${esc(s.display_date ?? '')}">
+      return `<div class="sr-row" data-type="show" data-slug="${esc(artist.slug)}" data-date="${esc(s.display_date ?? '')}">
         <div class="sr-avatar" style="${imgSt}" data-name="${esc(artist.name)}">${artist.image_url ? '' : `<span>${esc((artist.name[0]??'?').toUpperCase())}</span>`}</div>
         <div class="sr-info">
           <div class="sr-title">${esc(s.display_date ?? '')}</div>
@@ -1441,7 +1484,8 @@ export function renderShowCards(shows, title) {
     <div class="show-cards" id="showCardsGrid"></div>`);
 
   safeInnerHTML($('showCardsGrid'), shows.map(s => {
-    const artist   = state.artists.find(a => a.slug === s.artist_slug) ?? { name: s.artist_name ?? s.artist_slug ?? '', slug: s.artist_slug ?? '' };
+    const artist   = resolveShowArtist(s);
+    if (!artist?.slug) return ''; // skip un-resolvable shows
     const artStyle = artist.image_url
       ? `background-image:url('${esc(artist.image_url)}');background-color:${artistColor(artist.name)}`
       : `background-color:${artistColor(artist.name)}`;
@@ -1449,7 +1493,7 @@ export function renderShowCards(shows, title) {
       ? `<img src="${esc(artist.image_url)}" alt="" loading="lazy">`
       : `<span class="art-init">${esc(artist.name[0]?.toUpperCase() ?? '?')}</span>`;
     return `
-      <div class="show-card" data-slug="${esc(s.artist_slug ?? '')}" data-date="${esc(s.display_date)}">
+      <div class="show-card" data-slug="${esc(artist.slug)}" data-date="${esc(s.display_date)}">
         <div class="show-card-art" style="${artStyle}">${artInner}<span class="card-play">▶</span></div>
         <div class="show-card-body">
           <div class="show-card-artist">${esc(artist.name)}</div>
@@ -1476,6 +1520,11 @@ export async function viewTrending() {
   nav.record(viewTrending, []);
   showLoading(); setBreadcrumb([{ label: 'Trending Shows' }]);
   try {
+    // Trending payload only carries artist_uuid — resolveShowArtist needs
+    // state.artists for the uuid→slug lookup. Wait briefly if it's still loading.
+    for (let i = 0; i < 30 && !state.artists?.length; i++) {
+      await new Promise(r => setTimeout(r, 100));
+    }
     const data  = await api.trending();
     const shows = data.shows ?? data;
     renderShowCards(shows, '🔥 Trending Shows');
