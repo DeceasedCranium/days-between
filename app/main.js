@@ -6,10 +6,18 @@ const path = require('path');
 const fs   = require('fs');
 const { pipeline } = require('node:stream/promises');
 const cast = require('./cast');
+const { initNugsScraper, destroyGhostOnQuit } = require('./nugs-scraper');
 
-// Local archival download directory — populated in app.whenReady() once
-// app.getPath('music') is available. Module-scoped so the IPC handler can read it.
-let _downloadDir = null;
+// Local archival download directory — resolved LAZILY on the first
+// `download-track` call. Eagerly creating it inside `app.whenReady()` was a
+// race against the rest of the boot sequence: if any handler fired before
+// the mkdir resolved, downloads silently failed with "directory not
+// initialized". Pull-on-demand sidesteps the race entirely.
+function getDownloadDir() {
+  const dir = path.join(app.getPath('music'), 'Days Between');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
 // Must be called before app.whenReady() — enables Chromium's built-in
 // Media Router so Cast devices appear in the system device picker.
@@ -19,661 +27,6 @@ let win = null;
 let tray = null;
 let isMini = false;
 
-/* ── Ghost scraper ───────────────────────────────────────────────────────────
-   A visible BrowserWindow that loads nugs.net pages as a real Chromium browser.
-   Being a real browser it solves Cloudflare / bot challenges that fetch() can't.
-
-   DESIGN: Only ONE scrape runs at a time.  If the handler is called while a
-   scrape is in flight it returns { ok:false, error:'busy' } IMMEDIATELY so the
-   IPC channel is never held open waiting.  A 10-second hard timeout destroys
-   the window so the next call gets a clean slate.  A `settled` flag makes every
-   code path idempotent — double-resolve is impossible.
-   ─────────────────────────────────────────────────────────────────────────── */
-let _ghostWin  = null;
-let _scraping  = false;
-
-// Timing jitter helper — randomises polling intervals to defeat volumetric bot detection
-const jitter = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-
-function _destroyGhost() {
-  try { if (_ghostWin && !_ghostWin.isDestroyed()) _ghostWin.destroy(); } catch {}
-  _ghostWin = null;
-  _scraping = false;
-}
-
-function _ensureGhost() {
-  if (_ghostWin && !_ghostWin.isDestroyed()) return _ghostWin;
-  _ghostWin = new BrowserWindow({
-    show:         false,   // fully headless — never surfaces to the user
-    skipTaskbar:  true,    // excluded from OS taskbar/dock
-    width:        1100,
-    height:       700,
-    title:        'Days Between — Nugs Scraper',
-    // persist:nugs gives the ghost window its own cookie jar that survives
-    // restarts — Cloudflare clearance cookies are retained across sessions.
-    // userAgent spoofs a real Linux Chrome so nugs.net doesn't fingerprint us
-    // as Electron/Node and serve error pages.
-    webPreferences: {
-      partition:        'persist:nugs',
-      nodeIntegration:  false,
-      contextIsolation: true,
-      userAgent:
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    },
-  });
-  _ghostWin.on('closed', () => { _ghostWin = null; _scraping = false; });
-
-  // ── Stealth injection — strip Electron/webdriver fingerprints on every navigation
-  // Cloudflare and Demandware check navigator.webdriver before running their challenges.
-  // We patch it out in dom-ready (before page scripts fully execute their checks).
-  _ghostWin.webContents.on('dom-ready', () => {
-    if (!_ghostWin || _ghostWin.isDestroyed()) return;
-    _ghostWin.webContents.executeJavaScript(`
-      try {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        // Restore a minimal chrome object — Electron omits it, another Cloudflare signal
-        if (!window.chrome) {
-          Object.defineProperty(window, 'chrome', { writable: false, value: { runtime: {} } });
-        }
-      } catch(e) {}
-    `).catch(() => {});
-  });
-
-  // Diagnostic: log every failed load so we know exactly which URL 404s
-  _ghostWin.webContents.on('did-fail-load', (_, errorCode, errorDescription, validatedURL) => {
-    if (errorCode === -3) return; // -3 = ERR_ABORTED (normal for cancelled navigations)
-    console.error('[ghost] did-fail-load:', validatedURL, '—', errorCode, errorDescription);
-  });
-
-  // ── Error-page / redirect-loop recovery ──────────────────────────────────
-  // Nugs sometimes redirects to /error/technical-reasons or /on/error when the
-  // session is stale.  When we detect this, navigate to the homepage to refresh
-  // cookies, wait 3 s, then reload the original URL so the scrape can retry.
-  const ERROR_URL_RE = /\/error\/|\/on\/error|technical-reasons|\/404|\/500/i;
-  _ghostWin.webContents.on('did-navigate', (_, navUrl) => {
-    if (!ERROR_URL_RE.test(navUrl)) return;
-    console.warn('[ghost] error/redirect page detected — refreshing session:', navUrl);
-    _ghostWin.webContents.loadURL('https://play.nugs.net/home').catch(() => {});
-  });
-  return _ghostWin;
-}
-
-// Regex that matches any URL where the user needs to interact (login, OAuth, challenges)
-const LOGIN_URL_RE = /login|signin|sign-in|oauth|auth\b|id\.nugs\.net|cloudflare|challenge/i;
-
-// ── Manual DOM bridge — renderer can inject page HTML when auto-scrape fails ──
-// Usage from renderer: await window.ipc.injectNugsHtml(html)
-// The HTML is forwarded directly to the same parser pipeline as the ghost scrape,
-// so no changes are needed in nugs-scraper.js.
-ipcMain.handle('inject-nugs-html', (_, html) => {
-  if (!html || typeof html !== 'string') return { ok: false, error: 'no HTML provided' };
-  console.info('[ghost] manual DOM injection — length:', html.length);
-  return { ok: true, html };
-});
-
-ipcMain.handle('scrape-nugs-html', async (_, url) => {
-  if (_scraping) {
-    console.warn('[ghost] busy — rejecting:', url);
-    return { ok: false, error: 'ghost scraper busy — try again shortly' };
-  }
-  if (!url.startsWith('https://play.nugs.net') && !url.startsWith('https://www.nugs.net')) {
-    return { ok: false, error: 'Invalid domain' };
-  }
-  _scraping = true;
-
-  try {
-    // ── Verified session warm-start ───────────────────────────────────────────
-    // Fix for "Subscription Required": a blind 1 s wait was not enough to
-    // prove the session token is active before Demandware checks it.
-    // Now: if the ghost is cold we load the homepage and POLL for DOM proof
-    // that the user is logged in (account link, stash link, logout link).
-    // Only after that proof fires do we proceed to the subscription-gated URL.
-    // 5 s timeout → [ghost] AUTH FAILED log (non-fatal; caller will see the
-    // subscription wall and surface it to the UI).
-    {
-      const warmWin = _ensureGhost();
-      let warmUrl = '';
-      try { warmUrl = warmWin.webContents.getURL?.() ?? ''; } catch {}
-      const isCold = !warmUrl.includes('nugs.net') ||
-                      warmUrl === 'about:blank'     ||
-                      /\/error|\/404/i.test(warmUrl);
-      if (isCold) {
-        console.log('[ghost] session warm-start: ghost is cold — verifying login on play.nugs.net/home…');
-        await new Promise(r => {
-          warmWin.webContents.once('did-navigate', () => {
-            // Selectors that only exist when the user is authenticated in the play. web player
-            const PROOF = [
-              // play.nugs.net player-specific UI
-              '[class*="UserAvatar"]','[class*="user-avatar"]','[class*="Avatar"]',
-              '[class*="PlayBar"]','[class*="playbar"]','[class*="player-bar"]',
-              '[class*="Library"]','[class*="library"]',
-              'a[href*="/library"]','a[href*="/profile"]',
-              // fallback: account/logout indicators
-              '[class*="userMenu"]','[class*="user-menu"]','[class*="logout"]',
-              '[aria-label*="account" i]','[aria-label*="library" i]',
-            ].join(',');
-            const startMs = Date.now();
-            const poll = async () => {
-              if (warmWin.isDestroyed()) { r(); return; }
-              try {
-                const ok = await warmWin.webContents.executeJavaScript(`
-                  (function() {
-                    if (document.querySelector('${PROOF}')) return true;
-                    // Secondary check: no Sign-In CTA and app chrome is present
-                    var signIn = document.querySelector(
-                      'a[href*="/login"],a[href*="/sign-in"],[class*="signIn"],[class*="sign-in"]'
-                    );
-                    return !signIn && !!document.querySelector('nav,header,[class*="nav"],[class*="Nav"]');
-                  })()
-                `);
-                if (ok) {
-                  console.log('[ghost] session warm-start: login verified ✓ — proceeding to', url);
-                  r();
-                } else if (Date.now() - startMs >= 6000) {
-                  console.error('[ghost] AUTH FAILED: User token rejected — please sign in to play.nugs.net');
-                  r(); // non-fatal: let the scrape proceed so the UI can show the auth wall
-                } else {
-                  setTimeout(poll, jitter(300, 600));
-                }
-              } catch { r(); }
-            };
-            setTimeout(poll, jitter(300, 600));
-          });
-          warmWin.webContents.loadURL('https://play.nugs.net/home').catch(() => r());
-        });
-      }
-      // Diagnostic log for subscription-gated pages
-      const isLivePage = /\/watch|\/live\/|\/stream/i.test(url) &&
-                         !/browse|library|home/i.test(url);
-      if (isLivePage) {
-        console.log('[ghost] Livestream handshake: Session Validated. Extracting HLS…');
-      }
-    }
-
-    return await new Promise(resolve => {
-      const ghost = _ensureGhost();
-      let settled        = false;
-      let isAuthenticating = false;  // true while user is on a login/OAuth/challenge page
-      let hardTimer;
-
-      /* ── settle() — zero-crash, idempotent ─────────────────────────────
-         Five-layer guard:
-           1. destroyed ghost window — early return with no-op
-           2. double-call (settled flag)
-           3. removeListener / webContents calls wrapped in try/catch
-           4. clears all navigation listeners before resolving
-           5. always calls resolve() so the IPC channel is never orphaned   */
-      function settle(result) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(hardTimer);
-        try {
-          if (!ghost.isDestroyed()) {
-            ghost.webContents.removeListener('dom-ready', onDomReady);
-            ghost.webContents.removeAllListeners('did-navigate');
-            ghost.webContents.removeAllListeners('will-navigate');
-          }
-        } catch { /* webContents may be dying — ignore */ }
-        _destroyGhost();   // free resources on every completion path
-        resolve(result);
-      }
-
-      /* ── armHardTimer — always cancels previous before re-arming ────── */
-      function armHardTimer(ms) {
-        clearTimeout(hardTimer);
-        hardTimer = setTimeout(() => {
-          console.warn(`[ghost] hard timeout (${ms / 1000}s) for:`, url);
-          _destroyGhost();
-          settle({ ok: false, error: `ghost timeout (${ms / 1000}s): ${url}` });
-        }, ms);
-      }
-
-      // Initial 20 s budget
-      armHardTimer(20_000);
-
-      /* ── ghostEval — null-safe executeJavaScript ─────────────────────── */
-      async function ghostEval(js) {
-        if (settled || !ghost || ghost.isDestroyed()) return undefined;
-        try { return await ghost.webContents.executeJavaScript(js); }
-        catch (e) { console.warn('[ghost] eval error:', e.message); return undefined; }
-      }
-
-      /* ── will-navigate — fires BEFORE navigation commits ─────────────────
-         Catches login redirects at the earliest possible moment so we can
-         suspend the scrape loop and extend the timer before the page unloads. */
-      ghost.webContents.on('will-navigate', (_, navUrl) => {
-        if (settled) return;
-        if (LOGIN_URL_RE.test(navUrl)) {
-          console.warn('[ghost] will-navigate → auth/challenge page — hard timer will expire:', navUrl);
-          isAuthenticating = true;
-          // Ghost is headless — user cannot interact, so let the existing timer expire
-        }
-      });
-
-      /* ── did-navigate — fires AFTER navigation completes ─────────────────
-         Two roles:
-           • Login page  → extend timeout so user can authenticate
-           • Return page → reset isAuthenticating and restart the scrape     */
-      ghost.webContents.on('did-navigate', (_, navUrl) => {
-        if (settled) return;
-        const isAuthPage = LOGIN_URL_RE.test(navUrl);
-        if (isAuthPage) {
-          console.warn('[ghost] did-navigate → auth/challenge — hard timer will expire:', navUrl);
-          isAuthenticating = true;
-          // Ghost is headless — let the hard timer expire and return an error silently
-        } else if (/nugs\.net/.test(navUrl)) {
-          console.log('[ghost] did-navigate → nugs content — resuming scrape:', navUrl);
-          isAuthenticating = false;
-          armHardTimer(25_000);
-          ghost.webContents.once('dom-ready', onDomReady);
-        }
-      });
-
-      /* ── onDomReady — scroll, hydrate, poll ──────────────────────────── */
-      async function onDomReady() {
-        if (settled) return;
-        let currentUrl = '';
-        try { currentUrl = ghost.isDestroyed() ? '' : (ghost.webContents.getURL() ?? ''); }
-        catch { return; }
-
-        // Bail immediately on login / challenge pages — ghost is headless, let timer expire
-        if (LOGIN_URL_RE.test(currentUrl)) {
-          console.warn('[ghost] dom-ready on auth/challenge page — hard timer will expire:', currentUrl);
-          isAuthenticating = true;
-          return;
-        }
-        isAuthenticating = false;
-
-        const isStash = /\/library\/|\/stash|my-library|my-stash|my-collection/i.test(currentUrl);
-
-        // browse/artists pages handled on-demand by scrape-nugs-letter IPC
-        if (/browse\/artists/i.test(currentUrl)) {
-          const snap = await ghostEval('document.documentElement.outerHTML');
-          settle(snap ? { ok: true, html: snap } : { ok: false, error: 'browse-artists snapshot failed' });
-          return;
-        }
-
-        // ── All other pages: scroll + poll ─────────────────────────────
-        await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
-        console.log('[ghost] initial scroll:', currentUrl);
-
-        // Click "View All" / "A–Z" if present (some pages show a featured subset)
-        await ghostEval(`
-          (function() {
-            var LABELS = ['view all', 'a-z', 'browse all', 'all artists', 'see all'];
-            var btn = Array.from(document.querySelectorAll('a,button')).find(function(el) {
-              var t = el.textContent.trim().toLowerCase();
-              return LABELS.some(function(l) { return t === l || t.startsWith(l); });
-            });
-            if (btn) { btn.click(); console.log('[ghost] clicked:', btn.textContent.trim()); }
-          })()
-        `);
-
-        await new Promise(r => setTimeout(r, 3000));
-        if (settled) return;
-
-        // Poll until we see enough content elements — interval is randomised each
-        // tick to avoid fixed-cadence volumetric fingerprinting.
-        const POLL_MAX  = 10_000;
-        const MIN_FOUND = isStash ? 3 : 6;
-        let   elapsed   = 0;
-
-        while (elapsed < POLL_MAX) {
-          if (settled) return;
-
-          if (isAuthenticating) {
-            await new Promise(r => setTimeout(r, 1000));
-            elapsed = 0;
-            continue;
-          }
-
-          const pollMs = jitter(400, 800);
-          await new Promise(r => setTimeout(r, pollMs));
-          elapsed += pollMs;
-          if (settled) return;
-
-          if (!ghost || ghost.isDestroyed()) {
-            settle({ ok: false, error: 'ghost window destroyed during poll' });
-            return;
-          }
-
-          const found = await ghostEval(`
-            (function() {
-              // play.nugs.net /watch: video cards
-              var watchCards = document.querySelectorAll(
-                '[class*="ShowCard"],[class*="show-card"],[class*="ContentCard"],[class*="content-card"]'
-              ).length;
-              // play.nugs.net /browse/artists/ or /library/: artist links + library items
-              var artistLinks = document.querySelectorAll(
-                'a[href*="/artist/"],a[href*="/browse/artists/"],.artist-name'
-              ).length;
-              // play.nugs.net /library/: library item cards
-              var libItems = document.querySelectorAll(
-                '[class*="LibraryItem"],[class*="library-item"],' +
-                '.stash-grid-item,.grid-artist-name,.showtitle-st'
-              ).length;
-              var total = Math.max(watchCards, artistLinks, libItems);
-              return total;
-            })()
-          `);
-
-          console.log('[ghost] poll', elapsed + 'ms —', (found ?? 0), '(need ' + MIN_FOUND + ')');
-
-          if ((found ?? 0) >= MIN_FOUND) {
-            if (isStash) {
-              // ── Stash Scroll & Harvest ───────────────────────────────────
-              // Same virtualised-DOM approach as the artist A-Z engine.
-              // Scroll top→bottom in half-viewport steps, harvesting every
-              // .stash-grid-item into a Map on each tick.  At the bottom, click
-              // Load More if present and repeat; stop when no button and at bottom.
-              // Returns JSON so the parser can use a fast path (no HTML snapshot).
-              armHardTimer(120_000);
-              console.log('[ghost] stash: starting scroll+harvest');
-
-              const stashJson = await ghostEval(`
-                (function() {
-                  var PLAY_BASE = 'https://play.nugs.net';
-                  return new Promise(function(resolve) {
-                    var all = new Map(); // keyed by relative href slug
-
-                    // Multi-selector harvest: works on both play.nugs.net /library/
-                    // and legacy www.nugs.net /stash/ selectors
-                    function harvest() {
-                      var ITEM_SEL = [
-                        '.stash-grid-item',
-                        '[class*="LibraryItem"]', '[class*="library-item"]',
-                        '[class*="ShowCard"]',    '[class*="show-card"]',
-                        '[class*="ContentCard"]', '[class*="content-card"]',
-                      ].join(',');
-                      document.querySelectorAll(ITEM_SEL).forEach(function(item) {
-                        var a    = item.querySelector('a[href]');
-                        var href = a ? (a.getAttribute('href') || '') : '';
-                        if (!href) return;
-                        var key  = href.split('?')[0];
-                        if (all.has(key)) return;
-                        var abs  = href.startsWith('http') ? href : PLAY_BASE + (href.startsWith('/') ? href : '/' + href);
-                        var q    = function(sel) { var el = item.querySelector(sel); return el ? el.textContent.trim() : ''; };
-                        var img  = item.querySelector('img');
-                        // Try play.nugs.net selectors first, fall back to www.nugs.net selectors
-                        var title  = q('[class*="title"],[class*="Title"]') || q('.showtitle-st') || q('[class*="name"],[class*="Name"]');
-                        var artist = q('[class*="artist"],[class*="Artist"]') || q('.grid-artist-name');
-                        var date   = q('[class*="date"],[class*="Date"],time') || q('.grid-launch-date');
-                        var venue  = q('[class*="venue"],[class*="Venue"]') || q('.grid-venue');
-                        all.set(key, {
-                          title:    title || artist,
-                          artist:   artist,
-                          date:     date,
-                          venue:    venue,
-                          imageUrl: img ? (img.src || img.dataset.src || '') : '',
-                          linkUrl:  abs,
-                          isLive:   false,
-                        });
-                      });
-                    }
-
-                    function findLoadMore() {
-                      return Array.from(document.querySelectorAll('button,a[role="button"],a'))
-                        .find(function(el) {
-                          var t = (el.textContent || '').trim().toLowerCase();
-                          return t === 'load more' || t === 'view more' || t.startsWith('load more');
-                        }) || null;
-                    }
-
-                    function isAtBottom() {
-                      return window.scrollY + window.innerHeight >=
-                             document.documentElement.scrollHeight - 10;
-                    }
-
-                    // Base scroll step + random ±60px offset per tick — avoids
-                    // fixed-pixel scroll cadence that bot detectors fingerprint.
-                    function nextStep() {
-                      return Math.max(
-                        Math.floor(window.innerHeight / 2) + Math.floor(Math.random() * 120) - 60,
-                        200
-                      );
-                    }
-                    // In-page jitter helper (mirrors main-process jitter)
-                    function rnd(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-                    var cooldown = false;
-
-                    function tick() {
-                      harvest();
-                      if (isAtBottom()) {
-                        if (cooldown) { setTimeout(tick, rnd(200, 500)); return; }
-                        var btn = findLoadMore();
-                        if (btn) {
-                          console.log('[ghost-stash] clicking Load More — harvested so far:', all.size);
-                          btn.click();
-                          cooldown = true;
-                          // Mutation-Watch: wait for DOM to stabilise after click
-                          new Promise(function(res) {
-                            var debounce = null;
-                            function reset() { clearTimeout(debounce); debounce = setTimeout(res, rnd(400, 700)); }
-                            var ob = new MutationObserver(reset);
-                            ob.observe(document.body, { childList: true, subtree: true });
-                            reset();
-                            setTimeout(function() { ob.disconnect(); clearTimeout(debounce); res(); }, 2000);
-                          }).then(function() {
-                            cooldown = false;
-                            harvest();
-                            window.scrollBy(0, nextStep());
-                            setTimeout(tick, rnd(200, 500));
-                          });
-                        } else {
-                          // At bottom, no Load More — complete
-                          harvest();
-                          console.log('[ghost-stash] harvest complete:', all.size, 'items');
-                          resolve(JSON.stringify(Array.from(all.values())));
-                        }
-                        return;
-                      }
-                      window.scrollBy(0, nextStep());
-                      setTimeout(tick, rnd(200, 500));
-                    }
-
-                    window.scrollTo(0, 0);
-                    setTimeout(tick, rnd(400, 700)); // initial hydration pause
-                  });
-                })()
-              `);
-
-              if (settled) return;
-              let stashItems = null;
-              try { if (stashJson) stashItems = JSON.parse(stashJson); }
-              catch (e) { console.warn('[ghost] stash JSON parse failed:', e.message); }
-
-              if (stashItems?.length > 0) {
-                console.log(`[ghost] stash harvest: ${stashItems.length} items`);
-                settle({ ok: true, html: '', stashItems });
-              } else {
-                console.warn('[ghost] stash scroll+harvest got 0 items — falling back to HTML');
-                const snapHtml = await ghostEval('document.documentElement.outerHTML');
-                settle(snapHtml ? { ok: true, html: snapHtml } : { ok: false, error: 'stash harvest failed' });
-              }
-              return;
-            }
-
-            await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
-            await new Promise(r => setTimeout(r, 500));
-            const html = await ghostEval('document.documentElement.outerHTML');
-            settle(html ? { ok: true, html } : { ok: false, error: 'outerHTML empty' });
-            return;
-          }
-
-          // Double-scroll if still sparse after 4 s
-          if ((found ?? 0) < 4 && elapsed >= 4000 && elapsed < 4500) {
-            await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
-            await new Promise(r => setTimeout(r, 2000));
-            await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
-            await new Promise(r => setTimeout(r, 2000));
-          }
-        }
-
-        // Poll exhausted — snapshot whatever rendered
-        console.warn('[ghost] poll exhausted — snapshotting:', currentUrl);
-        const html = await ghostEval('document.documentElement.outerHTML');
-        settle(html ? { ok: true, html } : { ok: false, error: 'poll exhausted, empty snapshot' });
-      }
-
-      // did-fail-load fires when Chromium's network stack rejects the request
-      // (ERR_FAILED, ERR_CONNECTION_REFUSED, etc.).  Without this handler the
-      // ghost just sits idle until the 25 s hard timer fires.
-      ghost.webContents.on('did-fail-load', (_, errCode, errDesc, failedUrl) => {
-        if (settled) return;
-        if (errCode === -3) return; // -3 = ERR_ABORTED — normal for redirects, ignore
-        console.warn(`[ghost] did-fail-load: ${errDesc} (${errCode}) for ${failedUrl}`);
-        settle({ ok: false, error: `${errDesc} (${errCode}) loading '${failedUrl}'` });
-      });
-
-      ghost.webContents.once('dom-ready', onDomReady);
-      ghost.loadURL(url).catch(e => settle({ ok: false, error: e.message }));
-    });
-  } catch (err) {
-    console.error('[ghost] setup error:', err);
-    return { ok: false, error: err.message };
-  } finally {
-    _scraping = false;
-  }
-});
-
-/* ── extract-nugs-stream ────────────────────────────────────────────────────
-   Reliable HLS m3u8 extraction for play.nugs.net /watch/ pages.
-   Three-layer strategy:
-     1. JS extraction — check window.__INITIAL_STATE__ / __PRELOADED_STATE__
-        and scan all <script> text + page HTML for .m3u8 URLs.
-     2. Network sniffer — attach onBeforeRequest on the ghost session (persist:nugs)
-        BEFORE navigating so the very first .m3u8 manifest request is captured.
-     3. Falls back to "subscription required" error if neither fires.
-   ─────────────────────────────────────────────────────────────────────────── */
-ipcMain.handle('extract-nugs-stream', async (_, url) => {
-  if (!url) return { ok: false, error: 'no URL provided' };
-  if (_scraping) return { ok: false, error: 'ghost scraper busy — try again shortly' };
-  if (!url.startsWith('https://play.nugs.net') && !url.startsWith('https://www.nugs.net')) {
-    return { ok: false, error: 'Invalid domain' };
-  }
-  _scraping = true;
-
-  const PLAY_BASE = 'https://play.nugs.net';
-  let _sniffResolve = null;
-
-  try {
-    const ghost       = _ensureGhost();
-    const nugsSession = ghost.webContents.session; // persist:nugs session
-
-    // ── Step 1: Navigate to /home first ───────────────────────────────────
-    // This stops any video already playing in the ghost window (preventing
-    // stale .m3u8 requests from being captured by the sniffer below).
-    // Also warms the session / refreshes Cloudflare cookies if needed.
-    console.log('[ghost-stream] resetting ghost on /home…');
-    await new Promise(r => {
-      const guard = setTimeout(r, 6000);
-      ghost.webContents.once('dom-ready', () => { clearTimeout(guard); r(); });
-      ghost.webContents.loadURL(`${PLAY_BASE}/home`).catch(() => { clearTimeout(guard); r(); });
-    });
-    await new Promise(r => setTimeout(r, 800));
-
-    // ── Step 2: Install network sniffer BEFORE navigating ─────────────────
-    // Broad filter — catches .m3u8 from ANY host (Akamai, CloudFront, nugs CDN,
-    // Wowza, etc).  We filter in the callback to only fire once per extraction.
-    const sniffPromise = new Promise(resolve => { _sniffResolve = resolve; });
-    nugsSession.webRequest.onBeforeRequest(
-      { urls: ['*://*/*'] }, // catch everything; filter for .m3u8 below
-      (details, callback) => {
-        const u = details.url;
-        // Accept any .m3u8 URL — skip hls.js bundle requests (contain 'hls.js' in path)
-        if (u.includes('.m3u8') && !u.includes('hls.js') && _sniffResolve) {
-          console.log('[ghost-stream] sniffed m3u8:', u.slice(0, 120));
-          _sniffResolve(u);
-          _sniffResolve = null; // fire only once
-        }
-        callback({});
-      }
-    );
-
-    // ── Step 3: Navigate to the stream page ───────────────────────────────
-    console.log('[ghost-stream] navigating to', url);
-    await new Promise(r => {
-      const guard = setTimeout(r, 8000);
-      ghost.webContents.once('dom-ready', () => { clearTimeout(guard); r(); });
-      ghost.webContents.loadURL(url).catch(() => { clearTimeout(guard); r(); });
-    });
-    await new Promise(r => setTimeout(r, 3000)); // hydration — let SPA and video player init
-
-    // ── Step 3b: Click play button in the ghost ───────────────────────────
-    // play.nugs.net only fires the m3u8 request AFTER the user hits Play.
-    // Simulate a click on the most likely play button so the player initialises
-    // and the manifest request hits the network sniffer.
-    await ghost.webContents.executeJavaScript(`
-      (function() {
-        var playBtn = document.querySelector(
-          'button[aria-label*="play" i], button[title*="play" i],' +
-          '[class*="PlayButton"],[class*="play-button"],[class*="playBtn"],' +
-          '[class*="PlayBtn"],[class*="play_btn"],[data-testid*="play"],' +
-          'button[class*="play"], .play-btn, .btn-play, [class*="playerPlay"]'
-        );
-        if (playBtn) {
-          console.log("[ghost-stream] clicking play:", playBtn.className || playBtn.getAttribute("aria-label"));
-          playBtn.click();
-          return "clicked:" + (playBtn.className || "play");
-        }
-        // Fallback: click the first video element to trigger autoplay
-        var vid = document.querySelector("video");
-        if (vid) { vid.play().catch(function(){}); return "video.play()"; }
-        return "no-play-btn";
-      })()
-    `).catch(() => null);
-
-    await new Promise(r => setTimeout(r, 1500)); // give player time to request manifest
-
-    // ── Step 4: JS extraction (preferred — returns master manifest) ───────
-    const extracted = await ghost.webContents.executeJavaScript(`
-      (function() {
-        try {
-          // Pass 1: window state objects injected by Next.js / React SSR
-          var st = window.__INITIAL_STATE__ || window.__PRELOADED_STATE__ || window.__NEXT_DATA__;
-          if (st) {
-            var flat = typeof st === 'string' ? st : JSON.stringify(st);
-            var hit  = flat.match(/https?:[^"\\\\]*\\.m3u8[^"\\\\\\s]*/);
-            if (hit) return hit[0].replace(/\\\\\\/g, '/');
-          }
-          // Pass 2: any <script> tag content
-          var scripts = Array.from(document.querySelectorAll('script'))
-                          .map(function(s){ return s.textContent; }).join('\\n');
-          var m = scripts.match(/["'\`](https?:\\/\\/[^"'\`\\s]*\\.m3u8[^"'\`\\s]*)/);
-          if (m) return m[1];
-          // Pass 3: full page HTML (catches data- attrs, inline config JSON, etc.)
-          var html = document.documentElement.innerHTML;
-          var m2   = html.match(/https?:\\/\\/[^\\s"'<>]*\\.m3u8[^\\s"'<>]*/);
-          return m2 ? m2[0] : null;
-        } catch(e) { return null; }
-      })()
-    `).catch(() => null);
-
-    if (extracted?.includes('.m3u8')) {
-      console.log('[ghost-stream] JS-extracted:', extracted.slice(0, 100));
-      return { ok: true, m3u8: extracted };
-    }
-
-    // ── Step 5: Wait for sniffer (up to 8s more — video player may be slow) ─
-    const sniffed = await Promise.race([
-      sniffPromise,
-      new Promise(r => setTimeout(() => r(null), 8000)),
-    ]);
-    _sniffResolve = null; // clear closure if the timeout won the race
-
-    if (sniffed) return { ok: true, m3u8: sniffed };
-
-    return { ok: false, error: 'Stream URL not found — a Nugs subscription may be required' };
-  } catch (err) {
-    console.error('[ghost-stream] error:', err.message);
-    return { ok: false, error: err.message };
-  } finally {
-    _scraping = false;
-    // Always remove sniffer listener — Electron only allows one at a time
-    try { _ghostWin?.webContents.session.webRequest.onBeforeRequest(null); } catch {}
-  }
-});
 
 function createWindow() {
   win = new BrowserWindow({
@@ -758,16 +111,6 @@ function createTray() {
 app.whenReady().then(() => {
   createWindow();
   createTray();
-
-  // ── Local archival storage directory ────────────────────────────────────────
-  // Tracks downloaded by the Download Bridge land here. Created once on boot
-  // so the IPC handler can assume it always exists.
-  try {
-    _downloadDir = path.join(app.getPath('music'), 'Days Between');
-    fs.mkdirSync(_downloadDir, { recursive: true });
-  } catch (err) {
-    console.error('[download-bridge] failed to create storage directory:', err);
-  }
 
   // Nugs.net CORS fix — inject required headers for nugs API/stream requests only
   const { session } = require('electron');
@@ -895,6 +238,11 @@ app.whenReady().then(() => {
   globalShortcut.register('MediaPlayPause',    () => win?.webContents.send('media', 'play-pause'));
   globalShortcut.register('MediaNextTrack',    () => win?.webContents.send('media', 'next'));
   globalShortcut.register('MediaPreviousTrack',() => win?.webContents.send('media', 'prev'));
+
+  // Headless nugs.net scraper (ghost BrowserWindow + IPC handlers).
+  // Lives in app/nugs-scraper.js as of v1.7 — see that file for the per-scrape
+  // AbortController and CDP-based JSON capture.
+  initNugsScraper();
 });
 
 app.on('window-all-closed', () => {
@@ -1069,9 +417,9 @@ function _segment(s) {
 
 ipcMain.handle('download-track', async (_, { url, filename, subdir, mode } = {}) => {
   try {
-    if (!_downloadDir) throw new Error('storage directory not initialized');
     if (!url || !filename) throw new Error('url and filename are required');
 
+    const downloadDir = getDownloadDir(); // lazy — guaranteed to exist by return
     const safeName = _segment(filename) || 'track';
     const cleanSubdir = String(subdir ?? '')
       .split(/[\/\\]/)
@@ -1079,7 +427,7 @@ ipcMain.handle('download-track', async (_, { url, filename, subdir, mode } = {})
       .filter(seg => seg && seg !== '..' && seg !== '.')
       .join(path.sep);
 
-    const targetDir = cleanSubdir ? path.join(_downloadDir, cleanSubdir) : _downloadDir;
+    const targetDir = cleanSubdir ? path.join(downloadDir, cleanSubdir) : downloadDir;
     fs.mkdirSync(targetDir, { recursive: true });
     const filePath = path.join(targetDir, safeName);
 
@@ -1146,28 +494,16 @@ try {
 }
 
 // ── Clean ghost-window shutdown on quit ───────────────────────────────────────
-// If the ghost scraper window is open when the app quits, destroy it safely
-// so we never trigger "Object has been destroyed" during the shutdown sequence.
-app.on('will-quit', () => {
-  try {
-    if (_ghostWin && !_ghostWin.isDestroyed()) {
-      _ghostWin.destroy();
-    }
-  } catch { /* already gone — ignore */ }
-  _ghostWin = null;
-});
+// The ghost scraper module owns the BrowserWindow handle now; we just call
+// into its lifecycle hook so it can destroy in-process.
+app.on('will-quit', () => destroyGhostOnQuit());
 
-// ── Global exception shield ────────────────────────────────────────────────────
-// Electron shows a fatal error dialog for any uncaught exception in the main
-// process.  The one we care about — "Object has been destroyed" — is a benign
-// race between ghost-window navigation and our listener cleanup.  We swallow
-// that specific error and log everything else without killing the app.
+// ── Last-resort exception logger ────────────────────────────────────────────
+// The "Object has been destroyed" race that used to live here is fixed at
+// the source: app/nugs-scraper.js wraps every awaited ghost call in an
+// AbortController and bails cleanly when the hard timer fires. We keep a
+// minimal logger so any genuinely unexpected throw still surfaces in stderr.
 process.on('uncaughtException', err => {
-  if (err?.message?.includes('Object has been destroyed')) {
-    console.warn('[main] suppressed "Object has been destroyed" ghost-window race:', err.message);
-    return; // do NOT re-throw — this is safe to ignore
-  }
-  // For all other unexpected errors, log but don't take down the app
   console.error('[main] uncaught exception:', err);
 });
 

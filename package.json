@@ -1,6 +1,6 @@
 {
   "name": "days-between",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "description": "Days Between — Live music streaming desktop app, powered by Relisten",
   "main": "app/main.js",
   "scripts": {
