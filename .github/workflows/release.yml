@@ -11,8 +11,29 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # ── Pure-helper unit tests run first — fast, platform-independent.
+  # Build + release jobs depend on this passing, so a regression in any
+  # of the tested helpers blocks the matrix and prevents tagging a bad
+  # release.
+  test:
+    name: Test (helpers)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install npm dependencies
+        run: npm install --no-audit --no-fund
+      - name: Run helper tests
+        run: npm test
+
   build:
     name: Build (${{ matrix.os }})
+    needs: test
     runs-on: ${{ matrix.os }}
 
     strategy:

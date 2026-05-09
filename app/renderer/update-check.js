@@ -13,30 +13,12 @@
  * ──────────────────────────────────────────────────────────────────────── */
 
 import { $, esc } from './utils.js';
+import { compareVersions } from '../shared/helpers.js';
 
 const REPO        = 'DeceasedCranium/days-between';
 const RELEASE_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const STARTUP_DELAY_MS = 4000;
 const DISMISS_KEY = 'dismissedUpdateVersion';
-
-/** Compare two semver-ish strings (e.g. "1.9.0" vs "1.10.0").
- *  Returns >0 if a is newer, <0 if b is newer, 0 if equal. Ignores the
- *  optional leading "v". Tolerates pre-release / build metadata by
- *  stripping anything past the first hyphen. */
-function compareVersions(a, b) {
-  const parse = s => String(s ?? '0')
-    .replace(/^v/, '')
-    .split('-')[0]
-    .split('.')
-    .map(n => parseInt(n, 10) || 0);
-  const ap = parse(a);
-  const bp = parse(b);
-  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
-    const av = ap[i] ?? 0, bv = bp[i] ?? 0;
-    if (av !== bv) return av - bv;
-  }
-  return 0;
-}
 
 function showUpdateBadge({ version, releaseUrl, body }) {
   // Dismiss if we've already shown this exact version.

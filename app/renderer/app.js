@@ -186,9 +186,13 @@ async function init() {
   lfm.load();
 
   applyTheme(settings.getKey('theme', 'dark'));
-  applyAccent(settings.getKey('accent', 'default'));
   applyDensity(settings.getKey('density', 'comfortable'));
+  // Glass theme MUST run before applyAccent — applyGlassTheme strips the
+  // inline --accent / --accent2 vars so its hue-based values can take over,
+  // and we want the preset accent (if any) to win over that hue. Applying
+  // accent last leaves the preset's inline var as the source of truth.
   applyGlassTheme(settings.getKey('glassTheme', {}));
+  applyAccent(settings.getKey('accent', 'default'));
   initVideoPlayer();
   initMixlr();
 

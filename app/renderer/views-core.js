@@ -12,36 +12,15 @@ import {
 import { nugsViewArtist, nugsViewRelease, searchNugsLocal } from './views-nugs.js';
 import { resolveArtistId } from './nugs-scraper.js';
 import { downloadFullShow } from './archive.js';
+import { resolveShowArtist as _resolveShowArtistShared } from '../shared/helpers.js';
 
 
 /* ── Show → artist resolution ──────────────────────────────────────────────
- * Different Relisten endpoints serialise the artist differently:
- *   • /shows/on-date     → `show.artist = { slug, name, uuid, ... }` (nested)
- *   • /trending/shows    → `show.artist_uuid` only — no nested artist, no slug
- *   • /search            → `show.artist_slug` (flat string)
- *
- * Reading any single field directly leaves the others as `undefined`, which
- * is how we ended up with `/api/v2/artists//shows/<date>` URLs (404). This
- * helper walks all three shapes and falls back to the cached artist list to
- * resolve a uuid → slug. Returns `{ slug, name, image_url, ... }` or null.
- * ──────────────────────────────────────────────────────────────────────── */
+ * Implementation lives in app/shared/helpers.js (browser-free + unit-tested).
+ * The shared version takes the artists cache as a parameter for testability;
+ * this wrapper defaults to the live `state.artists`. */
 export function resolveShowArtist(show) {
-  if (!show) return null;
-  // Direct nested artist (on-date, search v3)
-  if (show.artist?.slug) {
-    const cached = state.artists.find(a => a.slug === show.artist.slug);
-    return cached ?? show.artist;
-  }
-  // Flat artist_slug (search v2, sotd payload)
-  if (show.artist_slug) {
-    return state.artists.find(a => a.slug === show.artist_slug)
-        ?? { name: show.artist_name ?? show.artist_slug, slug: show.artist_slug };
-  }
-  // UUID-only (trending v3) — only resolvable once state.artists is loaded
-  if (show.artist_uuid) {
-    return state.artists.find(a => a.uuid === show.artist_uuid) ?? null;
-  }
-  return null;
+  return _resolveShowArtistShared(show, state.artists ?? []);
 }
 
 /* ── View helpers ────────────────────────────────── */

@@ -19,29 +19,9 @@
 import { showToast, showArchiveStatus } from './utils.js';
 import { nugsApi } from './api.js';
 import { audio } from './audio-engine.js';
+import { sanitizeSegment, extFromUrl, trackFilename } from '../shared/helpers.js';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-/** Strip path-hostile characters from a filename / folder segment. */
-function sanitizeSegment(s) {
-  return String(s ?? '')
-    .replace(/[\/\\\0:*?"<>|]/g, '_')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\.+$/, '')
-    .slice(0, 120) || 'untitled';
-}
-
-/** Pull the file extension off a URL (ignoring query string). */
-function extFromUrl(url, fallback = 'mp3') {
-  const m = String(url ?? '').split('?')[0].match(/\.([a-z0-9]{2,5})$/i);
-  return (m?.[1] ?? fallback).toLowerCase();
-}
-
-/** "01 - Sugar Magnolia.flac" — zero-padded track number, sanitized title. */
-function trackFilename(idx, title, url) {
-  return `${String(idx).padStart(2, '0')} - ${sanitizeSegment(title)}.${extFromUrl(url)}`;
-}
 
 /**
  * Archive every track of a show plus its cover art into

@@ -2,6 +2,14 @@
 import { $, esc, fmt, artistColor, showToast, shuffle, confirmDialog } from './utils.js';
 import { state, nav, settings, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
 import { nugsApi, nugsContainerImage } from './api.js';
+// Pure helpers that don't touch DOM/state/network — live in shared/helpers.js
+// for unit testability. See test/helpers.test.js.
+import {
+  nugsIsoDate,
+  applyNugsFilters,
+  sortByRecent,
+  sortByPopular,
+} from '../shared/helpers.js';
 import { injectArtistBio, lastfmArtistImage } from './lastfm.js';
 import { nugsResolveAndPlay, handleNugsAuthError, setPlayerArt } from './player.js';
 import { scrapeLive, scrapeRecent, scrapeStash, extractContainerId } from './nugs-scraper.js';
@@ -469,35 +477,9 @@ function welcomeContainerCard(c, idx) {
 
 /* ── Helpers ─────────────────────────────────────── */
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-// Normalize nugs performanceDate → YYYY-MM-DD.
-// Handles: "YYYY-MM-DD", "MM/DD/YYYY", "MM/DD/YYYY HH:MM:SS"
-function nugsIsoDate(d) {
-  if (!d) return '';
-  const iso = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const us = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (us) return `${us[3]}-${us[1].padStart(2,'0')}-${us[2].padStart(2,'0')}`;
-  return d;
-}
-
-function applyNugsFilters(releases, { sortAsc, year, month, type }) {
-  let list = releases.filter(r => {
-    const d = nugsIsoDate(r.performanceDate);
-    const isVideo = !!(r.videoURL || r.videoChapters || r.vodPlayerImage
-      || r.containerTypeStr?.toLowerCase().includes('video'));
-    if (type === 'audio' && isVideo)  return false;
-    if (type === 'video' && !isVideo) return false;
-    if (year  && !d.startsWith(year))                return false;
-    if (month && !d.startsWith(`${year}-${month}`)) return false;
-    return true;
-  });
-  list.sort((a, b) => {
-    const da = nugsIsoDate(a.performanceDate), db = nugsIsoDate(b.performanceDate);
-    return sortAsc ? (da > db ? 1 : -1) : (db > da ? 1 : -1);
-  });
-  return list;
-}
+// nugsIsoDate / applyNugsFilters / sortByRecent / sortByPopular are pure
+// helpers — implementations live in app/shared/helpers.js (browser-free) so
+// they can be unit-tested independently of the renderer. Imported at top.
 
 /* ── Grid card render ──────────────────────────────────────────────────────
  * Reuses the Relisten `.show-cards` / `.show-card` styles (defined in style.css
@@ -570,32 +552,6 @@ const NUGS_TABS = [
   { id: 'popular', label: 'Most Popular' },
   { id: 'year',    label: 'By Year' },
 ];
-
-/** Recently Added — sorts by `epochDateCreated` (the unix timestamp Nugs
- *  attaches when the container is first added to the catalog). This is
- *  distinct from `performanceDate` (the actual concert date), so the result
- *  ordering on this tab differs from the year-grouped view. Falls back to
- *  releaseDate, then performanceDate. */
-function sortByRecent(releases) {
-  const score = c => {
-    if (Number.isFinite(c.epochDateCreated)) return Number(c.epochDateCreated);
-    const r = c.releaseDate ?? c.dateCreated ?? c.performanceDate;
-    return r ? new Date(nugsIsoDate(r)).getTime() / 1000 : 0;
-  };
-  return [...releases].sort((a, b) => score(b) - score(a));
-}
-
-/** Most Popular — Nugs ships per-container sales counters (`salesAllTime`
- *  and `salesLast30`). Sort by all-time sales desc with last-30-days as a
- *  tiebreaker. If every container reports 0 (some artist tiers don't expose
- *  this), fall back to recently-added so the tab isn't just an alphabetical
- *  pile. */
-function sortByPopular(releases) {
-  const score = c => Number(c.salesAllTime ?? 0);
-  const tie   = c => Number(c.salesLast30  ?? 0);
-  const sorted = [...releases].sort((a, b) => score(b) - score(a) || tie(b) - tie(a));
-  return sorted.some(c => score(c) > 0 || tie(c) > 0) ? sorted : sortByRecent(releases);
-}
 
 export async function nugsViewArtist(artist) {
   nav.record(nugsViewArtist, [artist]);

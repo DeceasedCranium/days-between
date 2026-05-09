@@ -822,6 +822,11 @@ export function viewSettings() {
     const vals = readSliders();
     applyGlassTheme(vals);
     settings.setKey('glassTheme', { ...vals, preset });
+    // applyGlassTheme strips inline --accent so its hue-based value can win,
+    // which would clobber the user's preset accent (if they have one
+    // selected). Re-apply the preset so it stays the source of truth.
+    const savedAccent = settings.getKey('accent', 'default');
+    if (savedAccent && savedAccent !== 'default') applyAccent(savedAccent);
     // Update preset button active state
     document.querySelectorAll('.glass-preset-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.preset === preset));

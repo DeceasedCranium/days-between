@@ -1,0 +1,356 @@
+/* ── test/helpers.test.js — pure-helper unit tests ─────────────────────────
+ *
+ * Run via:   npm test
+ * Or:        node --test test/
+ *
+ * These tests pin the exact behaviour of regression-prone helpers. Most of
+ * them encode bugs we shipped during early dev — the assertions here are a
+ * tripwire that prevents the bug from coming back during future API-shape
+ * changes. When the Relisten or Nugs API responses shift, the test that
+ * matches the OLD shape will fail loudly instead of silently breaking
+ * production after an unrelated edit.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  sanitizeSegment,
+  extFromUrl,
+  trackFilename,
+  nugsIsoDate,
+  parseNugsDate,
+  nugsContainerImage,
+  sortByRecent,
+  sortByPopular,
+  applyNugsFilters,
+  resolveShowArtist,
+  compareVersions,
+} from '../app/shared/helpers.js';
+
+
+/* ── sanitizeSegment ───────────────────────────────────────────────────── */
+
+test('sanitizeSegment strips path-hostile characters', () => {
+  // 3 separators + 6 trailing-special chars → 9 underscores total
+  assert.equal(sanitizeSegment('foo/bar\\baz:qux*?"<>|'), 'foo_bar_baz_qux______');
+});
+
+test('sanitizeSegment collapses whitespace and trims', () => {
+  assert.equal(sanitizeSegment('  hello   world  '), 'hello world');
+});
+
+test('sanitizeSegment strips trailing dots (Windows-hostile)', () => {
+  assert.equal(sanitizeSegment('foo.....'), 'foo');
+});
+
+test('sanitizeSegment caps at 120 chars', () => {
+  const long = 'a'.repeat(200);
+  assert.equal(sanitizeSegment(long).length, 120);
+});
+
+test('sanitizeSegment returns "untitled" for empty / whitespace-only input', () => {
+  assert.equal(sanitizeSegment(''),       'untitled');
+  assert.equal(sanitizeSegment(null),     'untitled');
+  assert.equal(sanitizeSegment(undefined),'untitled');
+  assert.equal(sanitizeSegment('     '),  'untitled');
+});
+
+
+/* ── extFromUrl ────────────────────────────────────────────────────────── */
+
+test('extFromUrl pulls extension from a clean URL', () => {
+  assert.equal(extFromUrl('https://example.com/foo.flac'), 'flac');
+});
+
+test('extFromUrl ignores query string', () => {
+  assert.equal(extFromUrl('https://example.com/foo.mp3?token=abc'), 'mp3');
+});
+
+test('extFromUrl falls back when no extension', () => {
+  assert.equal(extFromUrl('https://example.com/foo'),         'mp3');
+  assert.equal(extFromUrl('https://example.com/foo', 'flac'), 'flac');
+});
+
+test('extFromUrl lowercases the extension', () => {
+  assert.equal(extFromUrl('https://example.com/foo.FLAC'), 'flac');
+});
+
+
+/* ── trackFilename ─────────────────────────────────────────────────────── */
+
+test('trackFilename builds zero-padded archive names', () => {
+  assert.equal(
+    trackFilename(1, 'Sugar Magnolia', 'https://cdn/foo.flac'),
+    '01 - Sugar Magnolia.flac',
+  );
+  assert.equal(
+    trackFilename(15, 'Truckin\'', 'https://cdn/foo.mp3'),
+    '15 - Truckin\'.mp3',
+  );
+});
+
+test('trackFilename sanitises hostile chars in titles', () => {
+  assert.equal(
+    trackFilename(2, 'Track / Slash', 'foo.mp3'),
+    '02 - Track _ Slash.mp3',
+  );
+});
+
+
+/* ── nugsIsoDate ───────────────────────────────────────────────────────── */
+
+test('nugsIsoDate normalises ISO already-correct dates', () => {
+  assert.equal(nugsIsoDate('2026-04-30'), '2026-04-30');
+});
+
+test('nugsIsoDate normalises US format', () => {
+  assert.equal(nugsIsoDate('4/30/2026'),   '2026-04-30');
+  assert.equal(nugsIsoDate('04/30/2026'),  '2026-04-30');
+  assert.equal(nugsIsoDate('12/9/1995'),   '1995-12-09');
+});
+
+test('nugsIsoDate handles US format with time suffix', () => {
+  assert.equal(nugsIsoDate('5/6/2026 12:36:45 PM'), '2026-05-06');
+});
+
+test('nugsIsoDate returns empty for nullish input', () => {
+  assert.equal(nugsIsoDate(''),        '');
+  assert.equal(nugsIsoDate(undefined), '');
+  assert.equal(nugsIsoDate(null),      '');
+});
+
+
+/* ── parseNugsDate ─────────────────────────────────────────────────────── */
+
+test('parseNugsDate parses MM/DD/YYYY HH:MM:SS into Unix seconds', () => {
+  const t = parseNugsDate('05/06/2026 12:36:45');
+  assert.ok(t > 0);
+  // Round-trip through Date — Unix seconds should match
+  const d = new Date(t * 1000);
+  assert.equal(d.getUTCFullYear(),  2026);
+  assert.equal(d.getUTCMonth() + 1, 5);
+  assert.equal(d.getUTCDate(),      6);
+});
+
+test('parseNugsDate returns 0 for empty input', () => {
+  assert.equal(parseNugsDate(''), 0);
+  assert.equal(parseNugsDate(null), 0);
+});
+
+
+/* ── nugsContainerImage ────────────────────────────────────────────────────
+ * The Nugs CDN URL pattern broke twice during dev. These assertions pin
+ * the exact transformation the code performs.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+test('nugsContainerImage builds the canonical CDN URL from extImage + orderID', () => {
+  const c = {
+    extImage: 'ddonato20260430_cover.jpg',
+    img: { orderID: 1 },
+  };
+  assert.equal(
+    nugsContainerImage(c),
+    'https://assets-01.nugscdn.net/livedownloads/images/shows/ddonato260430_01.jpg?h=300',
+  );
+});
+
+test('nugsContainerImage zero-pads orderID', () => {
+  const c = {
+    extImage: 'phish20260101_cover.jpg',
+    img: { orderID: 7 },
+  };
+  assert(nugsContainerImage(c).endsWith('phish260101_07.jpg?h=300'));
+});
+
+test('nugsContainerImage honours the width option for the hero variant', () => {
+  const c = {
+    extImage: 'gd19770508_cover.jpg',
+    img: { orderID: 1 },
+  };
+  assert(nugsContainerImage(c, { width: 600 }).endsWith('?h=600'));
+});
+
+test('nugsContainerImage prefers absolute URL fields over extImage', () => {
+  const c = {
+    imageURL: 'https://other.cdn/foo.jpg',
+    extImage: 'phish20260101_cover.jpg',
+  };
+  assert.equal(nugsContainerImage(c), 'https://other.cdn/foo.jpg');
+});
+
+test('nugsContainerImage falls back to verbatim extImage when regex does not match', () => {
+  const c = {
+    extImage: 'gdMAGL_cover.jpg',
+    img: { orderID: 1 },
+  };
+  assert(nugsContainerImage(c).endsWith('gdMAGL_cover.jpg?h=300'));
+});
+
+test('nugsContainerImage returns null when no usable reference', () => {
+  assert.equal(nugsContainerImage(null),       null);
+  assert.equal(nugsContainerImage({}),         null);
+  assert.equal(nugsContainerImage({ img: {} }), null);
+});
+
+
+/* ── sortByRecent / sortByPopular ─────────────────────────────────────────
+ * These two tabs LOOKED identical for a while because both fell back to
+ * performanceDate when their actual sort fields were missing. The tests
+ * pin the exact field priority.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+test('sortByRecent sorts by epochDateCreated desc', () => {
+  const releases = [
+    { containerID: 1, epochDateCreated: 1000 },
+    { containerID: 2, epochDateCreated: 3000 },
+    { containerID: 3, epochDateCreated: 2000 },
+  ];
+  const out = sortByRecent(releases);
+  assert.deepEqual(out.map(r => r.containerID), [2, 3, 1]);
+});
+
+test('sortByRecent falls back to performanceDate when epoch missing', () => {
+  const releases = [
+    { containerID: 1, performanceDate: '2026-01-01' },
+    { containerID: 2, performanceDate: '2026-03-01' },
+    { containerID: 3, performanceDate: '2026-02-01' },
+  ];
+  const out = sortByRecent(releases);
+  assert.deepEqual(out.map(r => r.containerID), [2, 3, 1]);
+});
+
+test('sortByRecent does not mutate input', () => {
+  const input = [{ containerID: 1, epochDateCreated: 1 }, { containerID: 2, epochDateCreated: 2 }];
+  const before = input.map(r => r.containerID);
+  sortByRecent(input);
+  assert.deepEqual(input.map(r => r.containerID), before);
+});
+
+test('sortByPopular sorts by salesAllTime desc', () => {
+  const releases = [
+    { containerID: 1, salesAllTime: 100 },
+    { containerID: 2, salesAllTime: 500 },
+    { containerID: 3, salesAllTime: 300 },
+  ];
+  const out = sortByPopular(releases);
+  assert.deepEqual(out.map(r => r.containerID), [2, 3, 1]);
+});
+
+test('sortByPopular uses salesLast30 as tiebreaker', () => {
+  const releases = [
+    { containerID: 1, salesAllTime: 100, salesLast30: 5  },
+    { containerID: 2, salesAllTime: 100, salesLast30: 50 },
+    { containerID: 3, salesAllTime: 100, salesLast30: 10 },
+  ];
+  const out = sortByPopular(releases);
+  assert.deepEqual(out.map(r => r.containerID), [2, 3, 1]);
+});
+
+test('sortByPopular falls back to sortByRecent when all sales are zero', () => {
+  const releases = [
+    { containerID: 1, salesAllTime: 0, epochDateCreated: 1000 },
+    { containerID: 2, salesAllTime: 0, epochDateCreated: 3000 },
+    { containerID: 3, salesAllTime: 0, epochDateCreated: 2000 },
+  ];
+  const out = sortByPopular(releases);
+  assert.deepEqual(out.map(r => r.containerID), [2, 3, 1]);
+});
+
+
+/* ── applyNugsFilters ────────────────────────────────────────────────────── */
+
+test('applyNugsFilters by year', () => {
+  const releases = [
+    { containerID: 1, performanceDate: '2024-05-01' },
+    { containerID: 2, performanceDate: '2025-05-01' },
+    { containerID: 3, performanceDate: '2025-06-01' },
+  ];
+  const out = applyNugsFilters(releases, { year: '2025' });
+  assert.deepEqual(out.map(r => r.containerID).sort(), [2, 3]);
+});
+
+test('applyNugsFilters audio-only excludes video releases', () => {
+  const releases = [
+    { containerID: 1, performanceDate: '2025-05-01', videoURL: 'https://v.cdn/x' },
+    { containerID: 2, performanceDate: '2025-06-01' },
+  ];
+  const out = applyNugsFilters(releases, { type: 'audio' });
+  assert.deepEqual(out.map(r => r.containerID), [2]);
+});
+
+
+/* ── resolveShowArtist ───────────────────────────────────────────────────────
+ * This was the bug behind every "On This Day" / "Trending" / "Today" 404.
+ * Different Relisten endpoints serialise the artist differently — the test
+ * pins behaviour for all three known shapes plus the cache-fallback path.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+const ARTIST_CACHE = [
+  { slug: 'phish',         uuid: 'phish-uuid',   name: 'Phish',         image_url: '/p.jpg' },
+  { slug: 'grateful-dead', uuid: 'gd-uuid',      name: 'Grateful Dead', image_url: null },
+];
+
+test('resolveShowArtist returns nested artist object directly (on-date shape)', () => {
+  const show   = { artist: { slug: 'phish', name: 'Phish' } };
+  const artist = resolveShowArtist(show, ARTIST_CACHE);
+  assert.equal(artist.slug, 'phish');
+});
+
+test('resolveShowArtist enriches nested artist via cache when slug matches', () => {
+  const show   = { artist: { slug: 'phish' } };
+  const artist = resolveShowArtist(show, ARTIST_CACHE);
+  assert.equal(artist.image_url, '/p.jpg'); // came from cache, not from show
+});
+
+test('resolveShowArtist looks up flat artist_slug', () => {
+  const show   = { artist_slug: 'phish' };
+  const artist = resolveShowArtist(show, ARTIST_CACHE);
+  assert.equal(artist.name, 'Phish');
+});
+
+test('resolveShowArtist resolves trending v3 artist_uuid via cache', () => {
+  const show   = { artist_uuid: 'gd-uuid' };
+  const artist = resolveShowArtist(show, ARTIST_CACHE);
+  assert.equal(artist.slug, 'grateful-dead');
+});
+
+test('resolveShowArtist returns null when uuid not in cache', () => {
+  const show = { artist_uuid: 'unknown-uuid' };
+  assert.equal(resolveShowArtist(show, ARTIST_CACHE), null);
+});
+
+test('resolveShowArtist returns synthesised stub for unknown flat slug', () => {
+  const show   = { artist_slug: 'mystery', artist_name: 'Mystery Band' };
+  const artist = resolveShowArtist(show, ARTIST_CACHE);
+  assert.equal(artist.slug, 'mystery');
+  assert.equal(artist.name, 'Mystery Band');
+});
+
+test('resolveShowArtist returns null for empty payloads', () => {
+  assert.equal(resolveShowArtist(null,           ARTIST_CACHE), null);
+  assert.equal(resolveShowArtist({},             ARTIST_CACHE), null);
+  assert.equal(resolveShowArtist({ display_date: '2026-04-30' }, ARTIST_CACHE), null);
+});
+
+
+/* ── compareVersions (update notifier) ───────────────────────────────────── */
+
+test('compareVersions handles basic dotted comparisons', () => {
+  assert.ok(compareVersions('1.10.0', '1.9.0')  > 0);
+  assert.ok(compareVersions('1.9.0',  '1.10.0') < 0);
+  assert.equal(compareVersions('1.9.0', '1.9.0'),  0);
+});
+
+test('compareVersions ignores leading "v"', () => {
+  assert.equal(compareVersions('v1.9.0', '1.9.0'), 0);
+});
+
+test('compareVersions strips pre-release / build metadata', () => {
+  assert.equal(compareVersions('1.9.0-rc.1', '1.9.0'), 0);
+});
+
+test('compareVersions handles missing segments as zero', () => {
+  assert.ok(compareVersions('1.10', '1.10.0') === 0);
+  assert.ok(compareVersions('2',    '1.99.99') > 0);
+});
