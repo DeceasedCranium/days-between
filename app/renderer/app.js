@@ -21,6 +21,7 @@ import {
 } from './views-user.js';
 import { nugsViewVideo, viewNugsDashboard, viewNugsWelcome } from './views-nugs.js';
 import { initMixlr, showMixlr, hideMixlr } from './mixlr-player.js';
+import { initUpdateCheck } from './update-check.js';
 
 /* ── LFM key — injected from main process ────────── */
 window.ipc?.getLfmKey?.().then(k => { if (k) setLfmKey(k); }).catch(() => {});
@@ -319,6 +320,10 @@ async function init() {
     showToast('Nugs session expired — please sign in again');
     if (nav.history[nav.cursor]?.fn === viewSettings) viewSettings();
   });
+
+  // Background poll of GitHub Releases for a new version. Silent on failure;
+  // shows a dismissable badge in the bottom-right when an update exists.
+  initUpdateCheck();
 }
 
 init();

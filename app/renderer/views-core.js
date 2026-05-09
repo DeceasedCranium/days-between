@@ -236,6 +236,74 @@ export async function viewToday() {
 }
 
 /* ── Welcome ─────────────────────────────────────── */
+/* ── Welcome stats summary ──────────────────────────────────────────────────
+ * Compact stats row + resume-listening card on the welcome page. Hidden
+ * when listening history is empty. Driven entirely by `store.getHistory()`
+ * — the same data backing the full Stats page (`viewStats`). */
+function renderWelcomeStats() {
+  const wrap = $('welcomeStats');
+  if (!wrap) return;
+  const hist = store.getHistory();
+  if (!hist.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+
+  const totalTracks   = hist.length;
+  const uniqueShows   = new Set(hist.map(h => `${h.artistSlug}::${h.date}`).filter(k => k !== '::')).size;
+  const uniqueArtists = new Set(hist.map(h => h.artistSlug).filter(Boolean)).size;
+  const totalSecs     = hist.reduce((s, h) => s + (h.duration || 0), 0);
+  const listenDisp    = totalSecs > 3600
+    ? `${(totalSecs / 3600).toFixed(1)}h`
+    : totalSecs > 0
+      ? `${Math.round(totalSecs / 60)}m`
+      : `~${Math.round(totalTracks * 6 / 60)}h`;
+
+  // One-line strip — "42 tracks · 8 shows · 5 artists · 3.2h listening"
+  // followed by a "View all →" link. Compact enough to not crowd OTD.
+  const strip = $('welcomeStatsStrip');
+  strip.innerHTML = `
+    <div class="welcome-stats-strip-label">Your listening</div>
+    <div class="welcome-stats-strip-vals">
+      <span><strong>${totalTracks}</strong> tracks</span>
+      <span class="welcome-stats-sep">·</span>
+      <span><strong>${uniqueShows}</strong> shows</span>
+      <span class="welcome-stats-sep">·</span>
+      <span><strong>${uniqueArtists}</strong> artists</span>
+      <span class="welcome-stats-sep">·</span>
+      <span><strong>${esc(listenDisp)}</strong> listening</span>
+    </div>
+    <button class="welcome-stats-link" id="welcomeStatsAll">View all →</button>`;
+
+  // "Pick up where you left off" stays as a clickable card under the strip.
+  const last = hist.find(h => h.artistSlug && h.date);
+  if (last) {
+    const resumeEl = $('welcomeResume');
+    resumeEl.innerHTML = `
+      <div class="welcome-resume-show">
+        <div class="welcome-resume-art" style="background:${artistColor(last.artistName)}">
+          <span class="art-init">${esc((last.artistName?.[0] ?? '?').toUpperCase())}</span>
+        </div>
+        <div class="welcome-resume-meta">
+          <div class="welcome-resume-label">Pick up where you left off</div>
+          <div class="welcome-resume-artist">${esc(last.artistName ?? last.artistSlug)} <span class="welcome-resume-date">· ${esc(last.date)}${last.trackTitle ? ' · ' + esc(last.trackTitle) : ''}</span></div>
+        </div>
+        <button class="action-btn primary welcome-resume-play">▶ Play</button>
+      </div>`;
+    resumeEl.style.display = '';
+    const resolveArtist = () =>
+      state.artists.find(a => a.slug === last.artistSlug)
+        ?? { name: last.artistName ?? last.artistSlug, slug: last.artistSlug };
+    resumeEl.querySelector('.welcome-resume-show').addEventListener('click', () => {
+      const a = resolveArtist();
+      state.artist = a;
+      viewShow(a, last.date);
+    });
+  }
+
+  $('welcomeStatsAll').addEventListener('click', () => {
+    import('./views-user.js').then(m => m.viewStats?.());
+  });
+}
+
 export async function viewWelcome() {
   // Don't write to contentInner when it's hidden (nugs/mixlr source is active)
   if (sidebarSource !== 'relisten') return;
@@ -248,7 +316,7 @@ export async function viewWelcome() {
 
   safeInnerHTML($('contentInner'), `
     <div class="welcome">
-      <div class="welcome-logo">D</div>
+      <img class="welcome-logo welcome-logo-img" src="../../assets/icon.svg" alt="Days Between">
       <h2>Days Between</h2>
       <p>Stream 70,000+ live concert recordings from Phish, Grateful Dead, and thousands more.
          Powered by <strong style="color:var(--accent)">Relisten</strong>.</p>
@@ -264,7 +332,16 @@ export async function viewWelcome() {
         <div class="welcome-otd-title">On This Day — ${esc(label)}</div>
         <div id="welcomeOtd"><div class="loading" style="height:60px;font-size:12px"><div class="spinner"></div>Loading…</div></div>
       </div>
+      <div class="welcome-stats" id="welcomeStats" style="display:none">
+        <div class="welcome-stats-strip" id="welcomeStatsStrip"></div>
+        <div class="welcome-stats-resume" id="welcomeResume" style="display:none"></div>
+      </div>
     </div>`);
+
+  // ── Listening Stats summary ───────────────────────────────────────────
+  // Hidden when history is empty (new install). Shows 4 stat tiles +
+  // "Pick up where you left off" → resume the most recently played show.
+  renderWelcomeStats();
 
   $('btnWelcomeRecent').addEventListener('click', () => viewRecent());
   $('btnWelcomeRandom').addEventListener('click', async () => {

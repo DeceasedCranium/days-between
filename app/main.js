@@ -304,6 +304,9 @@ ipcMain.on('player-update', (_, { title }) => {
   tray?.setToolTip(title ? `Days Between — ${title}` : 'Days Between');
 });
 
+// ── App version (used by the in-app update notifier) ───────────────────────
+ipcMain.handle('app:get-version', () => app.getVersion());
+
 // ── Shell ─────────────────────────────────────────────────────────────────
 ipcMain.on('open-url', (_, url) => {
   if (url.startsWith('http://') || url.startsWith('https://')) {

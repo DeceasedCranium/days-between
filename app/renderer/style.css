@@ -230,10 +230,10 @@ body {
 }
 .nav-btn:hover  { background: rgba(255,255,255,0.06); color: var(--text2); }
 .nav-btn.active {
-  background: linear-gradient(135deg, rgba(233,69,96,0.25), rgba(233,69,96,0.1));
-  border-color: rgba(233,69,96,0.3);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 25%, transparent), color-mix(in srgb, var(--accent) 10%, transparent));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--accent2);
-  box-shadow: 0 1px 4px rgba(233,69,96,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 15%, transparent), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 
 .artist-list {
@@ -258,7 +258,7 @@ body {
   position: relative;
 }
 .artist-item:hover  { background: var(--bg3); color: var(--text); }
-.artist-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(233,69,96,0.08); }
+.artist-item.active { color: var(--accent); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .artist-item.now-playing .artist-name { color: var(--accent); }
 .artist-item.now-playing::after {
   content: '▶';
@@ -304,7 +304,7 @@ body {
 .artist-item:hover .artist-fav-btn    { opacity: 1; }
 .artist-fav-btn.active                { opacity: 1; color: var(--accent); }
 .artist-fav-btn:hover                 { color: var(--accent2); }
-.artist-item.favorited                { border-left-color: rgba(233,69,96,0.4); }
+.artist-item.favorited                { border-left-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 
 /* ── Titlebar nav & icon buttons ───────────────── */
 .tb-nav-btn {
@@ -486,7 +486,7 @@ body {
   font-size: 34px;
   font-weight: 900;
   color: white;
-  box-shadow: 0 8px 32px rgba(233,69,96,0.35);
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .welcome h2 { color: var(--text); font-size: 22px; font-weight: 700; }
 .welcome p  { font-size: 13px; max-width: 320px; line-height: 1.65; }
@@ -521,14 +521,14 @@ body {
   transition: border-color 0.12s, color 0.12s, background 0.12s;
   flex-shrink: 0;
 }
-.action-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(233,69,96,0.08); }
+.action-btn:hover { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .action-btn.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
 }
 .action-btn.primary:hover { background: var(--accent2); border-color: var(--accent2); color: #fff; }
-.action-btn.show-heart-btn.active { background: rgba(233,69,96,0.15); border-color: var(--accent); color: var(--accent); }
+.action-btn.show-heart-btn.active { background: color-mix(in srgb, var(--accent) 15%, transparent); border-color: var(--accent); color: var(--accent); }
 
 /* ── Year grid ─────────────────────────────────── */
 .year-grid {
@@ -579,7 +579,7 @@ body {
   transition: all 0.12s;
 }
 .filter-btn:hover  { border-color: var(--accent); color: var(--accent); }
-.filter-btn.active { background: rgba(233,69,96,0.15); border-color: var(--accent); color: var(--accent); }
+.filter-btn.active { background: color-mix(in srgb, var(--accent) 15%, transparent); border-color: var(--accent); color: var(--accent); }
 .filter-sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
 
 /* ── Show list ─────────────────────────────────── */
@@ -677,7 +677,7 @@ body {
   color: var(--text2);
   border: 1px solid var(--border);
 }
-.tag-accent { background: rgba(233,69,96,0.15); color: var(--accent); border-color: transparent; }
+.tag-accent { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); border-color: transparent; }
 .tag-green  { background: rgba(82,196,26,0.15);  color: var(--green);  border-color: transparent; }
 .tag-gold   { background: rgba(245,197,24,0.15); color: #f5c518;       border-color: transparent; }
 
@@ -734,7 +734,7 @@ body {
   transition: background 0.1s;
 }
 .track-row:hover   { background: var(--bg3); }
-.track-row.playing { background: rgba(233,69,96,0.1); }
+.track-row.playing { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
 .track-num {
   min-width: 22px;
@@ -1009,7 +1009,7 @@ body {
   transition: background 0.1s;
 }
 .queue-item:hover   { background: var(--bg3); }
-.queue-item.current { background: rgba(233,69,96,0.1); }
+.queue-item.current { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .queue-item.current .queue-item-num { color: var(--accent); }
 .queue-item-num  { min-width: 22px; font-size: 11px; color: var(--text3); text-align: right; }
 .queue-item-name { flex: 1; font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1278,7 +1278,7 @@ body {
   background: var(--text3); border-radius: 50%;
   transition: transform 0.2s, background 0.2s;
 }
-.toggle input:checked + .toggle-slider               { background: rgba(233,69,96,0.35); }
+.toggle input:checked + .toggle-slider               { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 .toggle input:checked + .toggle-slider::before       { transform: translateX(18px); background: var(--accent); }
 
 .settings-btn {
@@ -2918,11 +2918,11 @@ body { border-radius: 12px; overflow: hidden; }
 
 /* ── Modern active/hover states ─────────────────── */
 .artist-item.active {
-  background: linear-gradient(90deg, rgba(233,69,96,0.13) 0%, rgba(233,69,96,0.04) 100%);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 13%, transparent) 0%, color-mix(in srgb, var(--accent) 4%, transparent) 100%);
   border-left-color: var(--accent);
 }
 .artist-item.active .artist-avatar {
-  box-shadow: 0 0 0 2px var(--accent), 0 3px 12px rgba(233,69,96,0.4);
+  box-shadow: 0 0 0 2px var(--accent), 0 3px 12px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 /* ── Sidebar search — glassier input ────────────── */
@@ -2958,10 +2958,10 @@ body { border-radius: 12px; overflow: hidden; }
 }
 .sidebar .source-tab:hover { color: var(--text2); background: rgba(255,255,255,0.05); }
 .sidebar .source-tab.active {
-  background: linear-gradient(135deg, rgba(233,69,96,0.22), rgba(233,69,96,0.1));
-  border-color: rgba(233,69,96,0.3);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, var(--accent) 10%, transparent));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--accent2);
-  box-shadow: 0 1px 6px rgba(233,69,96,0.2), inset 0 1px 0 rgba(255,255,255,0.07);
+  box-shadow: 0 1px 6px color-mix(in srgb, var(--accent) 20%, transparent), inset 0 1px 0 rgba(255,255,255,0.07);
 }
 
 /* ── Player art — slightly elevated ─────────────── */
@@ -2978,10 +2978,10 @@ body { border-radius: 12px; overflow: hidden; }
 .progress-fill {
   border-radius: 4px;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
-  box-shadow: 0 0 8px rgba(233,69,96,0.5);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 .progress-bar:hover .progress-fill {
-  box-shadow: 0 0 12px rgba(233,69,96,0.7);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 /* ── Sleep Timer ───────────────────────────────── */
@@ -3246,9 +3246,9 @@ html, body { font-size: 13.5px; }
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 .titlebar-logo {
-  background: linear-gradient(135deg, #f0952c, #c96d10);
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
   border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(240,149,44,0.35);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent);
   font-size: 10px;
 }
 .titlebar-name { color: rgba(237,234,242,0.5); font-weight: 600; letter-spacing: 0.06em; }
@@ -3275,10 +3275,10 @@ html, body { font-size: 13.5px; }
   padding: 6px 2px;
 }
 .nav-btn.active {
-  background: linear-gradient(135deg, rgba(240,149,44,0.2), rgba(240,149,44,0.08));
-  border-color: rgba(240,149,44,0.3);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--accent2);
-  box-shadow: 0 1px 6px rgba(240,149,44,0.12), inset 0 1px 0 rgba(255,255,255,0.07);
+  box-shadow: 0 1px 6px color-mix(in srgb, var(--accent) 12%, transparent), inset 0 1px 0 rgba(255,255,255,0.07);
 }
 
 /* ── Artist items ───────────────────────────────── */
@@ -3290,7 +3290,7 @@ html, body { font-size: 13.5px; }
 }
 .artist-item:hover  { background: rgba(255,255,255,0.05); border-left: none; }
 .artist-item.active {
-  background: rgba(240,149,44,0.1);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   border-left: none;
   box-shadow: inset 3px 0 0 var(--accent);
   color: var(--accent2);
@@ -3314,9 +3314,18 @@ html, body { font-size: 13.5px; }
 
 /* ── Welcome screen ─────────────────────────────── */
 .welcome-logo {
-  background: linear-gradient(135deg, #f0952c, #c96d10);
-  box-shadow: 0 12px 40px rgba(240,149,44,0.35);
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: 22px;
+}
+/* When .welcome-logo is rendered as an <img>, swap the gradient placeholder
+ * for the actual icon — the SVG carries its own colours and rounding. */
+.welcome-logo-img {
+  background: transparent;
+  display: block;
+  object-fit: contain;
+  padding: 0;
+  font-size: 0;
 }
 
 /* ── Year cards ─────────────────────────────────── */
@@ -3332,7 +3341,7 @@ html, body { font-size: 13.5px; }
 .year-card:hover {
   transform: translateY(-3px);
   border-color: var(--accent);
-  box-shadow: 0 8px 24px rgba(240,149,44,0.15), 0 2px 12px rgba(0,0,0,0.3);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 15%, transparent), 0 2px 12px rgba(0,0,0,0.3);
 }
 .year-num { font-size: 24px; font-weight: 800; }
 
@@ -3348,7 +3357,7 @@ html, body { font-size: 13.5px; }
 .show-row:hover {
   transform: translateY(-1px);
   border-color: var(--accent);
-  box-shadow: 0 4px 16px rgba(240,149,44,0.1), 0 1px 8px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 10%, transparent), 0 1px 8px rgba(0,0,0,0.3);
   background: var(--bg4);
 }
 
@@ -3358,25 +3367,25 @@ html, body { font-size: 13.5px; }
   font-size: 12.5px;
   transition: all 0.15s;
 }
-.action-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(240,149,44,0.08); }
-.action-btn.primary { background: linear-gradient(135deg, #f0952c, #d4790e); border-color: transparent; }
-.action-btn.primary:hover { background: linear-gradient(135deg, #f5a83e, #e08620); }
-.action-btn.show-heart-btn.active { background: rgba(240,149,44,0.12); border-color: var(--accent); color: var(--accent); }
+.action-btn:hover { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.action-btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: transparent; }
+.action-btn.primary:hover { background: linear-gradient(135deg, var(--accent2), var(--accent)); }
+.action-btn.show-heart-btn.active { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); color: var(--accent); }
 
 /* ── Tags ───────────────────────────────────────── */
-.tag-accent { background: rgba(240,149,44,0.12); color: var(--accent); }
+.tag-accent { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 
 /* ── Tabs ───────────────────────────────────────── */
-.source-tab.active { background: linear-gradient(135deg, #f0952c, #d4790e); border-color: transparent; }
-.sidebar .source-tab.active { background: linear-gradient(135deg, rgba(240,149,44,0.2), rgba(240,149,44,0.08)); border-color: rgba(240,149,44,0.3); color: var(--accent2); }
+.source-tab.active { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: transparent; }
+.sidebar .source-tab.active { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 8%, transparent)); border-color: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent2); }
 
 /* ── Filter buttons ─────────────────────────────── */
-.filter-btn.active { background: rgba(240,149,44,0.12); border-color: var(--accent); color: var(--accent); }
+.filter-btn.active { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); color: var(--accent); }
 .filter-btn:hover  { border-color: var(--accent); color: var(--accent); }
 
 /* ── Track rows ─────────────────────────────────── */
 .track-row { border-radius: 8px; transition: background 0.12s; }
-.track-row.playing { background: rgba(240,149,44,0.08); }
+.track-row.playing { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .track-row.playing .track-num { color: var(--accent); }
 
 /* ── Player bar ─────────────────────────────────── */
@@ -3390,28 +3399,28 @@ html, body { font-size: 13.5px; }
 
 /* Play button glow */
 .ctrl-play {
-  background: linear-gradient(135deg, #f0952c, #d4790e);
-  box-shadow: 0 4px 16px rgba(240,149,44,0.4);
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 40%, transparent);
   width: 40px; height: 40px;
   transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
 }
 .ctrl-play:hover {
-  background: linear-gradient(135deg, #f5a83e, #e08620);
-  box-shadow: 0 6px 22px rgba(240,149,44,0.55);
+  background: linear-gradient(135deg, var(--accent2), var(--accent));
+  box-shadow: 0 6px 22px color-mix(in srgb, var(--accent) 55%, transparent);
   transform: scale(1.06);
 }
 .ctrl-play:active { transform: scale(0.96); }
 
 /* Progress bar */
 .progress-fill {
-  background: linear-gradient(90deg, #f0952c, #f5b84a);
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
   border-radius: 2px;
 }
 .progress-bar { border-radius: 3px; }
 .player-progress:hover .progress-bar { height: 6px; }
 
 /* ── Bookmarks tabs ─────────────────────────────── */
-.bk-tab.active { background: linear-gradient(135deg, #f0952c, #d4790e); border-color: transparent; }
+.bk-tab.active { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: transparent; }
 
 /* ── Scrollbars ─────────────────────────────────── */
 ::-webkit-scrollbar       { width: 5px; }
@@ -3452,7 +3461,7 @@ html, body { font-size: 13.5px; }
 .bio-link-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ── On This Day ────────────────────────────────── */
-.otd-hero { background: linear-gradient(135deg, rgba(240,149,44,0.12), rgba(240,149,44,0.04)); border-color: rgba(240,149,44,0.2); }
+.otd-hero { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--accent) 4%, transparent)); border-color: color-mix(in srgb, var(--accent) 20%, transparent); }
 .otd-play-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ── Search results ─────────────────────────────── */
@@ -3464,7 +3473,7 @@ html, body { font-size: 13.5px; }
   border-left: 1px solid rgba(255,255,255,0.05);
   background: linear-gradient(180deg, #130f1a 0%, #110d18 100%);
 }
-.queue-item.playing { background: rgba(240,149,44,0.08); }
+.queue-item.playing { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .queue-item.playing .qi-title { color: var(--accent); }
 
 /* ── Fade-in animation ──────────────────────────── */
@@ -4487,4 +4496,190 @@ html, body {
   padding: 2px 6px;
   border-radius: 4px;
   letter-spacing: 0.04em;
+}
+
+/* ── Update notifier badge (in-app GitHub release checker) ──────────────────
+ * Bottom-right floating pill. Slides in 4s after launch when a newer
+ * release exists on GitHub. Dismissable per-version via localStorage.
+ * ────────────────────────────────────────────────────────────────────────── */
+.update-badge {
+  position: fixed;
+  right: 16px;
+  bottom: 96px; /* sit above the player bar */
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  font-size: 12px;
+  max-width: 320px;
+  transform: translateY(20px);
+  opacity: 0;
+  transition: transform 200ms ease, opacity 200ms ease;
+  pointer-events: none;
+}
+.update-badge.visible {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+.update-badge-text { line-height: 1.35; min-width: 0; }
+.update-badge-text strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+.update-badge-text span {
+  display: block;
+  font-size: 11px;
+  color: var(--text3);
+}
+.update-badge-view {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+.update-badge-view:hover { opacity: 0.85; }
+.update-badge-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--text3);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.update-badge-dismiss:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+/* ── Welcome page: listening stats summary ──────────────────────────────────
+ * Compact one-line strip ("42 tracks · 8 shows · 5 artists · 3.2h listening")
+ * + small resume card. Sits at the bottom of the welcome page so On This
+ * Day stays prominent and uncrowded.
+ * ────────────────────────────────────────────────────────────────────────── */
+.welcome-stats {
+  margin: 24px auto 12px;
+  max-width: 720px;
+  text-align: left;
+  padding: 0 16px;
+}
+.welcome-stats-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.welcome-stats-strip-label {
+  color: var(--text3);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 10px;
+}
+.welcome-stats-strip-vals {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--text2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.welcome-stats-strip-vals strong {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-right: 1px;
+}
+.welcome-stats-sep { color: var(--text3); opacity: 0.5; }
+.welcome-stats-link {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.welcome-stats-link:hover { background: var(--surface2); }
+
+.welcome-resume-show {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.welcome-resume-show:hover {
+  border-color: var(--accent);
+  background: var(--surface2);
+}
+.welcome-resume-art {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.welcome-resume-art .art-init {
+  font-size: 16px;
+  font-weight: 900;
+  color: rgba(255,255,255,0.65);
+}
+.welcome-resume-meta { flex: 1 1 auto; min-width: 0; line-height: 1.3; }
+.welcome-resume-label {
+  font-size: 9px;
+  color: var(--text3);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 1px;
+}
+.welcome-resume-artist {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.welcome-resume-date {
+  font-size: 11px;
+  color: var(--text3);
+  font-weight: 500;
+}
+.welcome-resume-play {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 5px 10px;
 }
