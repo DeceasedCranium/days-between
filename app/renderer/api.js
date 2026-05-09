@@ -162,6 +162,39 @@ export const nugsApi = {
     return JSON.parse(text);
   },
 
+  /** Probe: globally-recent containers across the entire Nugs catalog.
+   *  Tries `catalog.containersAll` with no artistList filter — the streamapi
+   *  may or may not honour this. Returns an empty array on failure so the
+   *  welcome view can fall back to a per-pinned-artist derivation. */
+  async recentlyAddedGlobal({ limit = 12 } = {}) {
+    const auth = nugsAuth.get();
+    const url  = `${NUGS_STREAM}/api.aspx?method=catalog.containersAll`
+      + `&limit=${limit}&startOffset=1&availType=1&vdisp=1&sortBy=dateAddedDesc`;
+    try {
+      const r = await fetch(url, {
+        headers: {
+          'User-Agent': NUGS_UA,
+          ...(auth?.access_token ? { 'Authorization': `Bearer ${auth.access_token}` } : {}),
+        },
+      });
+      if (!r.ok) return [];
+      const text = await r.text();
+      if (text.trimStart().startsWith('<')) return []; // auth wall
+      const data = JSON.parse(text);
+      const containers = data?.Response?.containers ?? data?.response?.containers ?? [];
+      // Diagnostic — dump shape once so we can verify global recents work.
+      if (!nugsApi._recentDumped) {
+        nugsApi._recentDumped = true;
+        console.info('[nugs-recent] global recent count:', containers.length,
+          containers[0] ? '— sample container artist=' + containers[0].artistName : '');
+      }
+      return containers;
+    } catch (err) {
+      console.warn('[nugs] recentlyAddedGlobal failed:', err.message);
+      return [];
+    }
+  },
+
   async release(containerId) {
     const auth = nugsAuth.get();
     const url  = `${NUGS_STREAM}/api.aspx?method=catalog.container&containerID=${containerId}&vdisp=1`;

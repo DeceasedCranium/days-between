@@ -4319,3 +4319,172 @@ html, body {
 /* Back-to-years control sits on the left side of the filter bar when a year
  * is selected. Visually distinct from the sort/type pills. */
 .nugs-back-btn { padding-right: 12px; font-weight: 600; }
+
+/* ── Nugs welcome view (multi-section landing page) ─────────────────────────
+ * Each section is a header + horizontal-scrolling row of cards. Cards reuse
+ * the .show-card scaffold so their hover/play overlay matches the rest of the
+ * Nugs side. The .nugs-welcome-card wrapper just gives them a fixed width
+ * inside the flex row.
+ * ────────────────────────────────────────────────────────────────────────── */
+.nugs-welcome { padding: 16px 24px 32px; max-width: 100%; }
+.nugs-welcome-hero {
+  text-align: center;
+  margin: 24px 0 32px;
+}
+.nugs-welcome-logo { font-size: 48px; margin-bottom: 8px; }
+.nugs-welcome-hero h1 { font-size: 32px; font-weight: 800; margin: 4px 0; }
+.nugs-welcome-hero p  { color: var(--text3); font-size: 14px; margin: 0; }
+
+.nugs-welcome-section { margin-bottom: 28px; }
+.nugs-welcome-section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+.nugs-welcome-section-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+  flex: 0 0 auto;
+}
+.nugs-welcome-sub {
+  font-size: 12px;
+  color: var(--text3);
+  font-weight: 500;
+  flex: 1 1 auto;
+}
+.nugs-welcome-link {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background-color 120ms ease;
+  margin-left: auto;
+}
+.nugs-welcome-link:hover { background: var(--surface2); }
+
+.nugs-welcome-row {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 4px 12px;
+  scroll-snap-type: x proximity;
+  /* Firefox: invisible by default, faint on hover */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 200ms ease;
+}
+.nugs-welcome-row:hover {
+  scrollbar-color: rgba(255,255,255,0.18) transparent;
+}
+/* WebKit: hidden track, transparent thumb until hover */
+.nugs-welcome-row::-webkit-scrollbar {
+  height: 6px;
+  background: transparent;
+}
+.nugs-welcome-row::-webkit-scrollbar-track { background: transparent; }
+.nugs-welcome-row::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+  transition: background-color 200ms ease;
+}
+.nugs-welcome-row:hover::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.18);
+}
+.nugs-welcome-row:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.30);
+}
+
+/* The card wrapper inherits .show-card visuals via shared sub-elements
+ * (.show-card-art, .show-card-body) but takes its own border + sizing. */
+.nugs-welcome-card {
+  flex: 0 0 180px;
+  width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  scroll-snap-align: start;
+  transition: transform 140ms ease, border-color 140ms ease;
+}
+.nugs-welcome-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+}
+.nugs-welcome-card .show-card-art {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-position: center;
+  background-size: cover;
+}
+.nugs-welcome-card .show-card-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.nugs-welcome-card .show-card-art .art-init {
+  font-size: 40px;
+  font-weight: 900;
+  color: rgba(255,255,255,0.45);
+}
+.nugs-welcome-card .show-card-art .card-play {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 140ms ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+}
+.nugs-welcome-card:hover .show-card-art .card-play { opacity: 1; }
+.nugs-welcome-card .show-card-body { padding: 10px 12px 12px; }
+.nugs-welcome-card .show-card-date  {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nugs-welcome-card .show-card-venue {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nugs-welcome-card.is-live { border-color: #e25555; }
+.nugs-welcome-card .nugs-live-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: #e25555;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+}

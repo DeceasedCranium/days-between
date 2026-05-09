@@ -20,15 +20,450 @@ const nugsCI = () =>
     ? ($('nugsContentInner') ?? $('contentInner'))
     : $('contentInner');
 
-/* ── Welcome / landing view ──────────────────────── */
-export function viewNugsWelcome() {
+/* ── Welcome / landing view ──────────────────────────────────────────────────
+ * Four sections, each filling asynchronously and hiding itself if it has no
+ * data to show:
+ *   1. Live & Recent  — uses scrapeLive (live + recent webcasts)
+ *   2. Pinned Artists — artist tiles from localStorage pins
+ *   3. Recently Added — global recent containers (falls back to pinned-artist
+ *                       cached releases if the global probe returns nothing)
+ *   4. Discover       — random sample of catalog artists you haven't pinned
+ *
+ * Each card uses the same .show-card scaffold as the artist-page grid so
+ * styling stays consistent. Rows are horizontal-scrolling flex containers
+ * so the welcome view doesn't get arbitrarily tall.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+const NUGS_PINS_KEY = 'nugs_pinned_artists';
+function getNugsPins() {
+  try { return JSON.parse(localStorage.getItem(NUGS_PINS_KEY) ?? '[]'); } catch { return []; }
+}
+
+export async function viewNugsWelcome() {
   const ci = $('nugsContentInner');
   if (!ci) return;
+  nav.record(viewNugsWelcome, []);
+
+  ci.style.overflow = '';
+  ci.style.padding  = '';
   ci.innerHTML = `
-    <div class="welcome">
-      <div class="welcome-logo" style="font-size:40px">🎵</div>
-      <h2>Nugs.net</h2>
-      <p>Choose an artist from the sidebar,<br>or tap <strong>● LIVE HUB</strong> for live webcasts.</p>
+    <div class="nugs-welcome">
+      <div class="nugs-welcome-hero">
+        <div class="nugs-welcome-logo">🎵</div>
+        <h1>Nugs.net</h1>
+        <p>Live recordings from your favourite artists.</p>
+      </div>
+
+      <section class="nugs-welcome-section" id="nugsWelLiveSection">
+        <div class="nugs-welcome-section-header">
+          <h2>● Live &amp; Recent Webcasts</h2>
+          <button class="nugs-welcome-link" id="nugsWelLiveAll">Live Hub →</button>
+        </div>
+        <div class="nugs-welcome-row" id="nugsWelLiveRow">
+          <div class="loading" style="height:80px"><div class="spinner"></div></div>
+        </div>
+      </section>
+
+      <section class="nugs-welcome-section" id="nugsWelPinnedSection" style="display:none">
+        <div class="nugs-welcome-section-header">
+          <h2>📌 Your Pinned Artists</h2>
+        </div>
+        <div class="nugs-welcome-row" id="nugsWelPinnedRow"></div>
+      </section>
+
+      <section class="nugs-welcome-section" id="nugsWelRecentSection" style="display:none">
+        <div class="nugs-welcome-section-header">
+          <h2>✨ Recently Added</h2>
+          <span class="nugs-welcome-sub" id="nugsWelRecentSub"></span>
+        </div>
+        <div class="nugs-welcome-row" id="nugsWelRecentRow"></div>
+      </section>
+
+      <section class="nugs-welcome-section" id="nugsWelDiscoverSection" style="display:none">
+        <div class="nugs-welcome-section-header">
+          <h2>🎲 Discover Artists</h2>
+          <button class="nugs-welcome-link" id="nugsWelShuffle">↻ Shuffle</button>
+        </div>
+        <div class="nugs-welcome-row" id="nugsWelDiscoverRow"></div>
+      </section>
+    </div>`;
+
+  // ── 1. Live & Recent ──────────────────────────────────────────────
+  $('nugsWelLiveAll')?.addEventListener('click', () => viewNugsDashboard('live'));
+  loadWelLiveSection();
+
+  // ── 2. Pinned Artists ─────────────────────────────────────────────
+  loadWelPinnedSection();
+
+  // ── 3. Recently Added (global probe + fallback) ───────────────────
+  loadWelRecentSection();
+
+  // ── 4. Discover (random sample) ───────────────────────────────────
+  loadWelDiscoverSection();
+  $('nugsWelShuffle')?.addEventListener('click', () => loadWelDiscoverSection());
+}
+
+/* ── Section: Live & Recent webcasts ───────────────────────────────────── */
+async function loadWelLiveSection() {
+  const row = $('nugsWelLiveRow');
+  if (!row) return;
+  try {
+    const cards = await scrapeLive();
+    if (!cards?.length) {
+      $('nugsWelLiveSection').style.display = 'none';
+      return;
+    }
+    // Show up to 8 — Live cards first, then recent
+    const sorted = [...cards].sort((a, b) => (b.isLive ? 1 : 0) - (a.isLive ? 1 : 0)).slice(0, 8);
+    row.innerHTML = sorted.map((c, i) => welcomeShowCard(c, i)).join('');
+    row.querySelectorAll('.nugs-welcome-card').forEach(el =>
+      el.addEventListener('click', () => {
+        const c = sorted[+el.dataset.idx];
+        if (c?.linkUrl) {
+          // Reuse the dashboard's click handler by routing through scrapeLive's data shape
+          import('./nugs-scraper.js').then(m => {
+            const cid = m.extractContainerId(c.linkUrl);
+            if (cid) nugsViewRelease({ name: c.artist ?? 'Nugs', id: 'live', _nugs: true }, cid);
+            else showToast('Could not open this show');
+          });
+        }
+      }));
+  } catch (err) {
+    console.warn('[nugs-welcome] live section failed:', err.message);
+    $('nugsWelLiveSection').style.display = 'none';
+  }
+}
+
+/* ── Section: Pinned Artists ───────────────────────────────────────────── */
+function loadWelPinnedSection() {
+  const row = $('nugsWelPinnedRow');
+  if (!row) return;
+  const pins = getNugsPins();
+  if (!pins.length) {
+    $('nugsWelPinnedSection').style.display = 'none';
+    return;
+  }
+  $('nugsWelPinnedSection').style.display = '';
+  row.innerHTML = pins.map((p, i) => artistTileHtml(p.name, 'Pinned', i)).join('');
+  row.querySelectorAll('.nugs-welcome-card').forEach((el, i) => {
+    el.addEventListener('click', () => {
+      const p = pins[+el.dataset.idx];
+      if (!p) return;
+      nugsViewArtist({ id: p.id, name: p.name, slug: `nugs-${p.id}`, _nugs: true });
+    });
+    swapArtistTileImage(el, pins[i]);
+  });
+}
+
+/* ── Section: Recently Added ───────────────────────────────────────────────
+ * Two-tier strategy:
+ *   1. Try `streamapi.containersAll` with no artistList (global recents).
+ *      If that returns enough rows we use them directly.
+ *   2. Otherwise, build a pool from pinned artists. We proactively kick off
+ *      `nugsApi.catalog()` fetches for any pinned artist we haven't already
+ *      cached this session, in parallel, so the fallback pool isn't limited
+ *      to whichever artist the user happened to open during this run.
+ *
+ * Race-safety: a token ensures only the LATEST call to this function ever
+ * writes to the DOM. If the user navigates away and re-renders mid-fetch,
+ * the stale call's writes become no-ops. DOM is also re-queried at write
+ * time rather than captured up-front.
+ * ────────────────────────────────────────────────────────────────────────── */
+let _welRecentToken = 0;
+async function loadWelRecentSection() {
+  const myToken = ++_welRecentToken;
+  const initialSec = $('nugsWelRecentSection');
+  const initialRow = $('nugsWelRecentRow');
+  if (!initialRow) return;
+
+  // Show the section with a spinner immediately if we have any pinned
+  // artists (we know we'll have data eventually). This avoids the awkward
+  // "did the section disappear?" gap during the 15-artist pre-fetch.
+  const havePins = getNugsPins().length > 0;
+  if (havePins && initialSec) {
+    initialSec.style.display = '';
+    initialRow.innerHTML = `<div class="loading" style="height:80px;width:100%"><div class="spinner"></div></div>`;
+  }
+
+  // Tier 1: global probe.
+  let containers = [];
+  let source = '';
+  try {
+    const global = await nugsApi.recentlyAddedGlobal({ limit: 16 });
+    console.info('[nugs-welcome] recent: global probe returned', global.length, 'containers');
+    if (global.length >= 4) {
+      containers = global;
+      source = 'across the catalog';
+    }
+  } catch (err) {
+    console.warn('[nugs-welcome] recent: global probe threw:', err.message);
+  }
+  if (myToken !== _welRecentToken) return; // a newer call has superseded us
+
+  // Tier 2: pinned-artist pool (with on-demand catalog fetch).
+  if (!containers.length) {
+    const pins = getNugsPins();
+    if (!pins.length) {
+      const s = $('nugsWelRecentSection'); if (s) s.style.display = 'none';
+      return;
+    }
+    const missing = pins.filter(p => !nugsReleasesCache[p.id]);
+    if (missing.length) {
+      console.info('[nugs-welcome] recent: pre-fetching', missing.length, 'pinned-artist catalogs');
+      const queue = [...missing];
+      async function worker() {
+        while (queue.length) {
+          if (myToken !== _welRecentToken) return; // bail on supersede
+          const p = queue.shift();
+          if (!p) return;
+          try {
+            const all = [];
+            let offset = 1, batch;
+            do {
+              const data = await nugsApi.catalog(p.id, offset);
+              batch = data?.Response?.containers ?? data?.response?.containers ?? [];
+              all.push(...batch);
+              offset += 100;
+            } while (batch.length === 100);
+            nugsReleasesCache[p.id] = all;
+          } catch (err) {
+            console.warn('[nugs-welcome] recent: catalog fetch failed for', p.name, err.message);
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+    }
+    if (myToken !== _welRecentToken) return; // supersede check post-prefetch
+
+    const pooled = [];
+    for (const p of pins) {
+      const cached = nugsReleasesCache[p.id];
+      if (Array.isArray(cached)) pooled.push(...cached);
+    }
+    console.info('[nugs-welcome] recent: pinned pool has', pooled.length, 'containers');
+    if (pooled.length) {
+      containers = pooled
+        .sort((a, b) => Number(b.epochDateCreated ?? 0) - Number(a.epochDateCreated ?? 0))
+        .slice(0, 12);
+      source = 'from your pinned artists';
+    }
+  }
+
+  if (myToken !== _welRecentToken) return;
+
+  // Re-query DOM at write time — never trust the captured references after
+  // any awaits (the user may have navigated, replacing the welcome DOM).
+  const latestSec = $('nugsWelRecentSection');
+  const latestRow = $('nugsWelRecentRow');
+  const latestSub = $('nugsWelRecentSub');
+  if (!latestSec || !latestRow) return;
+
+  if (!containers.length) {
+    latestSec.style.display = 'none';
+    return;
+  }
+  latestSec.style.display = '';
+  if (latestSub) latestSub.textContent = source;
+
+  latestRow.innerHTML = containers.map((c, i) => welcomeContainerCard(c, i)).join('');
+  latestRow.querySelectorAll('.nugs-welcome-card').forEach(el =>
+    el.addEventListener('click', () => {
+      const c = containers[+el.dataset.idx];
+      if (!c?.containerID) return;
+      const artist = { id: String(c.artistID ?? ''), name: c.artistName ?? 'Nugs', _nugs: true };
+      nugsViewRelease(artist, String(c.containerID));
+    }));
+}
+
+/* ── Section: Discover Artists (random sample) ─────────────────────────── */
+function loadWelDiscoverSection() {
+  const row = $('nugsWelDiscoverRow');
+  if (!row) return;
+  const cache = nugsApi._artistCache;
+  if (!Array.isArray(cache) || cache.length < 8) {
+    // Catalog hasn't loaded yet — try again shortly.
+    setTimeout(loadWelDiscoverSection, 1500);
+    $('nugsWelDiscoverSection').style.display = 'none';
+    return;
+  }
+  const pinned  = new Set(getNugsPins().map(p => String(p.id)));
+  const pool    = cache.filter(a => !pinned.has(String(a.artistID)));
+  const sample  = shuffle(pool).slice(0, 12).map(a => ({
+    id: String(a.artistID),
+    name: a.artistName,
+    numShows: a.numShows ?? 0,
+  }));
+  if (!sample.length) {
+    $('nugsWelDiscoverSection').style.display = 'none';
+    return;
+  }
+  $('nugsWelDiscoverSection').style.display = '';
+  row.innerHTML = sample.map((a, i) =>
+    artistTileHtml(a.name, `${a.numShows} show${a.numShows === 1 ? '' : 's'}`, i)
+  ).join('');
+  row.querySelectorAll('.nugs-welcome-card').forEach((el, i) => {
+    el.addEventListener('click', () => {
+      const a = sample[+el.dataset.idx];
+      if (!a) return;
+      nugsViewArtist({ id: a.id, name: a.name, slug: `nugs-${a.id}`, _nugs: true });
+    });
+    swapArtistTileImage(el, sample[i]);
+  });
+}
+
+/* ── Artist tile (initials placeholder + lazy Nugs cover-art image swap) ───
+ * The image strategy is dead simple: every Nugs artist has at least one
+ * release, and every release has a CDN cover photo we already know how to
+ * resolve via nugsContainerImage(). Use the artist's most recent release
+ * cover as the tile image. No Wikipedia, no Last.fm, no 404s for obscure
+ * artists — works for every artist in the Nugs catalog.
+ *
+ * Pinned artists usually have their full catalog cached already (welcome
+ * pre-fetches them for the Recently Added section). Discover artists need
+ * one cheap fetch — limit=1 — and the result lands in nugsReleasesCache so
+ * subsequent renders are instant.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+// Per-artist cover-image cache. Keyed by artistID. Value = url string or
+// null (for "tried, no usable image"). Returned synchronously when known.
+const _nugsTileImageCache = new Map();
+
+async function getNugsArtistImage(artistId) {
+  const id = String(artistId);
+  if (_nugsTileImageCache.has(id)) return _nugsTileImageCache.get(id);
+
+  const pickFromContainers = (containers) => {
+    if (!Array.isArray(containers) || !containers.length) return null;
+    const sorted = [...containers].sort(
+      (a, b) => Number(b.epochDateCreated ?? 0) - Number(a.epochDateCreated ?? 0)
+    );
+    for (const c of sorted) {
+      const url = nugsContainerImage(c, { width: 240 });
+      if (url) return url;
+    }
+    return null;
+  };
+
+  // Use cached releases when we have them.
+  const cached = nugsReleasesCache[id];
+  if (cached?.length) {
+    const url = pickFromContainers(cached);
+    _nugsTileImageCache.set(id, url);
+    return url;
+  }
+
+  // Otherwise fetch one batch (we keep what we get for future use).
+  try {
+    const data = await nugsApi.catalog(id, 1);
+    const containers = data?.Response?.containers ?? data?.response?.containers ?? [];
+    if (containers.length) nugsReleasesCache[id] = containers;
+    const url = pickFromContainers(containers);
+    _nugsTileImageCache.set(id, url);
+    return url;
+  } catch (err) {
+    console.warn('[nugs-art] catalog fetch failed for artist', id, err.message);
+    _nugsTileImageCache.set(id, null);
+    return null;
+  }
+}
+
+function artistTileHtml(name, sub, idx) {
+  return `
+    <div class="nugs-welcome-card nugs-welcome-card-artist" data-idx="${idx}">
+      <div class="show-card-art typo" style="background:${artistColor(name)}">
+        <span class="art-init">${esc((name[0] ?? 'N').toUpperCase())}</span>
+        <div class="card-play">▶</div>
+      </div>
+      <div class="show-card-body">
+        <div class="show-card-date" title="${esc(name)}">${esc(name)}</div>
+        <div class="show-card-venue">${esc(sub)}</div>
+      </div>
+    </div>`;
+}
+
+/** Lazily resolve a Nugs cover-art image for the artist and swap it into
+ *  the tile when the image actually loads. Failure (no catalog, network
+ *  blip) leaves the colored initial in place — a perfectly fine fallback. */
+function swapArtistTileImage(cardEl, artist) {
+  if (!cardEl || !artist?.id) {
+    console.warn('[nugs-art] swap skipped — missing card or artist.id', artist);
+    return;
+  }
+  const artEl = cardEl.querySelector('.show-card-art');
+  if (!artEl) {
+    console.warn('[nugs-art] swap skipped — no .show-card-art element');
+    return;
+  }
+  getNugsArtistImage(artist.id).then(url => {
+    if (!url) return;
+    if (!document.body.contains(artEl)) {
+      console.warn('[nugs-art] swap skipped — artEl detached for', artist.name);
+      return;
+    }
+    // Detached <img> elements with `loading="lazy"` never trigger their
+    // load (the lazy heuristic waits for them to be near the viewport,
+    // which never happens for a memory-only element). Use eager loading.
+    const img = new Image();
+    img.alt = artist.name ?? '';
+    img.onload = () => {
+      if (!document.body.contains(artEl)) return;
+      artEl.classList.remove('typo');
+      artEl.innerHTML = '';
+      artEl.appendChild(img);
+      const play = document.createElement('div');
+      play.className = 'card-play';
+      play.textContent = '▶';
+      artEl.appendChild(play);
+    };
+    img.onerror = () => {
+      console.warn('[nugs-art] image FAILED to load for', artist.name, '—', url);
+    };
+    img.src = url;
+  }).catch(err => {
+    console.warn('[nugs-art] swap promise rejected for', artist.name, err);
+  });
+}
+
+/* ── Card renderers ────────────────────────────────────────────────────── */
+function welcomeShowCard(card, idx) {
+  const name  = card.title ?? card.name ?? 'Untitled';
+  const sub   = [card.artist, card.date].filter(Boolean).join(' · ');
+  const art   = card.imageUrl
+    ? `<img src="${esc(card.imageUrl)}" alt="${esc(name)}" loading="lazy" onerror="this.parentElement.classList.add('typo');this.replaceWith(Object.assign(document.createElement('span'),{className:'art-init',textContent:'${esc((name[0]??'?').toUpperCase())}'}))">`
+    : `<span class="art-init">${esc((name[0] ?? '?').toUpperCase())}</span>`;
+  return `
+    <div class="nugs-welcome-card${card.isLive ? ' is-live' : ''}" data-idx="${idx}">
+      <div class="show-card-art${card.imageUrl ? '' : ' typo'}" style="background:var(--bg3)">
+        ${art}
+        ${card.isLive ? '<div class="nugs-live-badge">● LIVE</div>' : ''}
+        <div class="card-play">▶</div>
+      </div>
+      <div class="show-card-body">
+        <div class="show-card-date" title="${esc(name)}">${esc(name)}</div>
+        ${sub ? `<div class="show-card-venue">${esc(sub)}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function welcomeContainerCard(c, idx) {
+  const date  = nugsIsoDate(c.performanceDate) || '';
+  const venue = [c.venueName, c.venueCity].filter(Boolean).join(' — ');
+  const img   = nugsContainerImage(c, { width: 300 });
+  const artist = c.artistName ?? '';
+  const heroColor = artistColor(artist || 'Nugs');
+  const art = img
+    ? `<img src="${esc(img)}" alt="${esc(artist)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'art-init',textContent:'${esc((artist[0] ?? '?').toUpperCase())}'}));this.parentElement.classList.add('typo')">`
+    : `<span class="art-init">${esc((artist[0] ?? '?').toUpperCase())}</span>`;
+  return `
+    <div class="nugs-welcome-card" data-idx="${idx}">
+      <div class="show-card-art${img ? '' : ' typo'}" style="background:${heroColor}">
+        ${art}
+        <div class="card-play">▶</div>
+      </div>
+      <div class="show-card-body">
+        <div class="show-card-date" title="${esc(artist)}">${esc(artist)}</div>
+        <div class="show-card-venue">${esc(date)}${venue ? ' · ' + esc(venue) : ''}</div>
+      </div>
     </div>`;
 }
 
