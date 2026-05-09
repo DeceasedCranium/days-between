@@ -1,6 +1,6 @@
 /* ── views-user.js — personal library views ──────────────────────── */
 import { $, esc, fmt, showToast, artistColor, shuffle, safeInnerHTML } from './utils.js';
-import { state, nav, store, settings, tapes, nugsAuth, nugsArtistStore, nugsReleasesCache } from './state.js';
+import { state, nav, store, settings, tapes, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
 import { nugsApi } from './api.js';
 import { lfm, lastfmArtistImage, getLfmKey } from './lastfm.js';
 import { player, preloadNext } from './player.js';
@@ -1013,8 +1013,17 @@ export function viewSettings() {
   });
 
   // ── Settings close button ─────────────────────────
+  // The Settings open path forces #contentInner visible and hides
+  // #nugsContentInner so Settings has a visible target regardless of which
+  // source tab is active. nav.back() replays the previous view but doesn't
+  // reverse the visibility swap — so without restoring the source pane
+  // here the user keeps seeing the stale Settings DOM after pressing X.
   if ($('btnSettingsClose')) {
     $('btnSettingsClose').addEventListener('click', () => {
+      if (sidebarSource === 'nugs') {
+        const ci = $('contentInner');     if (ci) ci.style.display = 'none';
+        const ni = $('nugsContentInner'); if (ni) ni.style.display = 'block';
+      }
       nav.back();
     });
   }

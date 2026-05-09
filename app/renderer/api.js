@@ -34,6 +34,48 @@ const NUGS_UA        = 'NugsNet/3.26.724 (Android; 7.1.2; Asus; ASUS_Z01QD; Scal
 const NUGS_UA_PLAYER = 'nugsnetAndroid';
 const NUGS_CLIENT_ID = 'Eg7HuH873H65r5rt325UytR5429';
 
+/** Resolve a Nugs container's cover-art URL.
+ *
+ *  Empirical pattern (from inspecting an actual nugs.net image URL):
+ *    extImage:  "ddonato20260430_cover.jpg"
+ *    img:       { orderID: 1, ... }
+ *    real URL:  https://assets-01.nugscdn.net/livedownloads/images/shows/
+ *               ddonato260430_01.jpg?h=600
+ *
+ *  Transform applied:
+ *    • Drop the first two year digits  (2026 → 26)
+ *    • Replace `_cover` (or whatever the trailing token is) with the
+ *      zero-padded `img.orderID`
+ *    • Prepend the `livedownloads/images/shows/` path
+ *
+ *  If the filename doesn't match the expected `<prefix><YYYY><MMDD>_<token>.<ext>`
+ *  shape we fall back to using the original extImage filename verbatim (some
+ *  containers may already ship the right form). Returns null if no usable
+ *  reference is present so the renderer can render typographic art instead
+ *  of a broken image.
+ */
+export function nugsContainerImage(c, { width = 300 } = {}) {
+  if (!c) return null;
+
+  // Already-absolute URL fields take priority.
+  const abs = c.imageURL ?? c.image ?? c.coverArt ?? c.coverImage ?? c.pic ?? null;
+  if (abs && typeof abs === 'string' && abs.startsWith('http')) return abs;
+
+  const ext = c.extImage;
+  if (!ext || typeof ext !== 'string') return null;
+
+  const orderID = String(c.img?.orderID ?? 1).padStart(2, '0');
+  const m = ext.match(/^(.+?)(\d{4})(\d{4})_[^.]+\.(\w+)$/);
+  let fname;
+  if (m) {
+    const [, prefix, yyyy, mmdd, fileExt] = m;
+    fname = `${prefix}${yyyy.slice(-2)}${mmdd}_${orderID}.${fileExt}`;
+  } else {
+    fname = ext; // best-effort fallback for non-standard names
+  }
+  return `https://assets-01.nugscdn.net/livedownloads/images/shows/${fname}?h=${width}`;
+}
+
 // Parse nugs date strings like "03/19/2026 18:31:47" (MM/DD/YYYY HH:MM:SS) → Unix ms
 export function parseNugsDate(s) {
   if (!s) return 0;

@@ -52,6 +52,19 @@ const ERROR_URL_RE = /\/error\/|\/on\/error|technical-reasons|\/404|\/500/i;
 
 // Endpoints that return JSON the renderer would otherwise have to parse out of
 // rendered HTML. Captured via CDP Network.getResponseBody — see startCdpCapture.
+//
+// Coverage notes:
+//   • streamapi.nugs.net  → catalog.containers*, catalog.container, user.* etc.
+//                           (also reached directly by renderer-side nugsApi)
+//   • subscriptions / id  → auth + entitlement payloads
+//   • play.nugs.net /api  → SPA-side endpoints (recently-added, popular,
+//                           playlists, recommendations) when the ghost loads
+//                           a /play page. The artist tabs feature uses these
+//                           if/when the page hits them; otherwise the renderer
+//                           falls back to deriving categories from the per-
+//                           artist catalog it already paginated.
+//   • www.nugs.net /api   → legacy site endpoints used by the dashboard
+//                           scraper.
 const JSON_ENDPOINT_RE = new RegExp([
   '\\bstreamapi\\.nugs\\.net\\b',
   '\\bsubscriptions\\.nugs\\.net\\b',

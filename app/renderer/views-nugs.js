@@ -1,7 +1,7 @@
 /* ── views-nugs.js — Nugs.net browsing views ──────────────────── */
 import { $, esc, fmt, artistColor, showToast, shuffle, confirmDialog } from './utils.js';
 import { state, nav, settings, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
-import { nugsApi } from './api.js';
+import { nugsApi, nugsContainerImage } from './api.js';
 import { injectArtistBio, lastfmArtistImage } from './lastfm.js';
 import { nugsResolveAndPlay, handleNugsAuthError, setPlayerArt } from './player.js';
 import { scrapeLive, scrapeRecent, scrapeStash, extractContainerId } from './nugs-scraper.js';
@@ -64,27 +64,104 @@ function applyNugsFilters(releases, { sortAsc, year, month, type }) {
   return list;
 }
 
-function renderNugsReleaseRows(releases, artist) {
+/* ── Grid card render ──────────────────────────────────────────────────────
+ * Reuses the Relisten `.show-cards` / `.show-card` styles (defined in style.css
+ * around line 1747). Each container becomes a square-ish card with its CDN
+ * cover art at top and date/venue text below — fallback to the typographic
+ * date layout when no image is available, matching `.show-card-art.typo`.
+ * ──────────────────────────────────────────────────────────────────────── */
+function renderNugsReleaseGrid(releases, artist) {
   const el = $('nugsReleaseList');
   if (!el) return;
-  el.innerHTML = releases.length === 0
-    ? `<div class="empty-state" style="padding:24px;color:var(--text3);text-align:center">No releases match the current filters</div>`
-    : releases.map(c => {
-        const isVideo = !!(c.videoURL || c.videoChapters || c.vodPlayerImage
-          || c.containerTypeStr?.toLowerCase().includes('video'));
-        return `<div class="show-row" data-cid="${esc(String(c.containerID))}">
-          <div class="show-date">${esc(nugsIsoDate(c.performanceDate) || String(c.containerID))}</div>
-          <div class="show-venue">${esc(c.venueName ?? '')}${c.venueCity ? ' — ' + esc(c.venueCity) : ''}</div>
-          <div class="show-badges">
-            ${isVideo ? `<span class="badge" title="Video release">🎬</span>` : ''}
-          </div>
-        </div>`;
-      }).join('');
-  el.querySelectorAll('.show-row').forEach(row =>
-    row.addEventListener('click', () => nugsViewRelease(artist, row.dataset.cid)));
+  if (releases.length === 0) {
+    el.innerHTML = `<div class="empty-state" style="padding:24px;color:var(--text3);text-align:center">No releases match the current filters</div>`;
+    return;
+  }
+  const heroColor = artistColor(artist.name);
+  el.innerHTML = `<div class="show-cards" id="nugsReleaseGrid">${releases.map(c => {
+    const isVideo  = !!(c.videoURL || c.videoChapters || c.vodPlayerImage
+      || c.containerTypeStr?.toLowerCase().includes('video'));
+    const date     = nugsIsoDate(c.performanceDate) || String(c.containerID);
+    const venue    = [c.venueName, c.venueCity].filter(Boolean).join(' — ');
+    const imgUrl   = nugsContainerImage(c, { width: 360 });
+    const artBg    = imgUrl
+      ? `background:${heroColor}`
+      : `background:${heroColor}`;
+    const artInner = imgUrl
+      ? `<img src="${esc(imgUrl)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'art-init',textContent:'${esc((artist.name[0]??'?').toUpperCase())}'}))">`
+      : (() => {
+          const parts = date.split('-');
+          const mn    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          const month = parts[1] ? (mn[parseInt(parts[1],10)-1] ?? '') : '';
+          const day   = parts[2] ? String(parseInt(parts[2],10)) : '';
+          const year  = parts[0] ?? '';
+          return `<div class="typo-artist">${esc(artist.name)}</div>
+                  <div class="typo-month">${esc(month)}</div>
+                  <div class="typo-day">${esc(day)}</div>
+                  <div class="typo-year">${esc(year)}</div>`;
+        })();
+    return `<div class="show-card" data-cid="${esc(String(c.containerID))}">
+      <div class="show-card-art${imgUrl ? '' : ' typo'}" style="${artBg}">
+        ${artInner}
+        <div class="card-play">&#9654;</div>
+      </div>
+      <div class="show-card-body">
+        <div class="show-card-date">${esc(date)}</div>
+        <div class="show-card-venue">${esc(venue)}</div>
+        <div class="show-card-badges">
+          ${isVideo ? '<span class="badge" title="Video release">🎬</span>' : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+  el.querySelectorAll('.show-card').forEach(card =>
+    card.addEventListener('click', () => nugsViewRelease(artist, card.dataset.cid)));
 }
 
-/* ── nugsViewArtist ──────────────────────────────── */
+/* ── nugsViewArtist ────────────────────────────────────────────────────────
+ * Tabbed artist page modeled on the Relisten side:
+ *   Recently Added | Playlists | Most Popular | By Year
+ *
+ * Recently Added / Most Popular / By Year are all derivations over the same
+ * per-artist catalog (one fetch, cached in nugsReleasesCache). Playlists is
+ * a separate streamapi call (containerType=playlist) that gracefully yields
+ * an empty state when the artist has none — see nugsApi.playlists().
+ *
+ * The grid uses the Relisten .show-cards CSS so styling stays consistent.
+ * ──────────────────────────────────────────────────────────────────────── */
+const NUGS_TAB_DEFAULT = 'recent';
+const NUGS_TABS = [
+  { id: 'recent',  label: 'Recently Added' },
+  { id: 'popular', label: 'Most Popular' },
+  { id: 'year',    label: 'By Year' },
+];
+
+/** Recently Added — sorts by `epochDateCreated` (the unix timestamp Nugs
+ *  attaches when the container is first added to the catalog). This is
+ *  distinct from `performanceDate` (the actual concert date), so the result
+ *  ordering on this tab differs from the year-grouped view. Falls back to
+ *  releaseDate, then performanceDate. */
+function sortByRecent(releases) {
+  const score = c => {
+    if (Number.isFinite(c.epochDateCreated)) return Number(c.epochDateCreated);
+    const r = c.releaseDate ?? c.dateCreated ?? c.performanceDate;
+    return r ? new Date(nugsIsoDate(r)).getTime() / 1000 : 0;
+  };
+  return [...releases].sort((a, b) => score(b) - score(a));
+}
+
+/** Most Popular — Nugs ships per-container sales counters (`salesAllTime`
+ *  and `salesLast30`). Sort by all-time sales desc with last-30-days as a
+ *  tiebreaker. If every container reports 0 (some artist tiers don't expose
+ *  this), fall back to recently-added so the tab isn't just an alphabetical
+ *  pile. */
+function sortByPopular(releases) {
+  const score = c => Number(c.salesAllTime ?? 0);
+  const tie   = c => Number(c.salesLast30  ?? 0);
+  const sorted = [...releases].sort((a, b) => score(b) - score(a) || tie(b) - tie(a));
+  return sorted.some(c => score(c) > 0 || tie(c) > 0) ? sorted : sortByRecent(releases);
+}
+
 export async function nugsViewArtist(artist) {
   nav.record(nugsViewArtist, [artist]);
   state.artist = artist;
@@ -101,12 +178,10 @@ export async function nugsViewArtist(artist) {
       } while (batch.length === 100);
       nugsReleasesCache[artist.id] = all;
     }
-    // Refresh sidebar count now that we have the release count
     renderArtists(state.filteredArtists);
-
     const allReleases = nugsReleasesCache[artist.id];
 
-    // Build year/month map for filter bar
+    // Year/month map (for the By Year tab only)
     const byYear = {};
     allReleases.forEach(r => {
       const d = nugsIsoDate(r.performanceDate);
@@ -118,26 +193,61 @@ export async function nugsViewArtist(artist) {
     });
     const years = Object.keys(byYear).sort((a, b) => b - a);
 
+    // Per-artist UI state — `tab` is the active tab id; `filters` only applies
+    // to the By Year tab.
+    let tab = NUGS_TAB_DEFAULT;
+    // selectedYear is null while the By Year tab shows the year-picker grid;
+    // it becomes a year string once the user drills into a year.
+    let selectedYear = null;
     const filters = { sortAsc: false, year: null, month: null, type: 'all' };
+
+    function renderTabBar() {
+      const tb = $('nugsArtistTabs');
+      if (!tb) return;
+      tb.innerHTML = NUGS_TABS.map(t =>
+        `<button class="nugs-tab-btn${tab === t.id ? ' active' : ''}" data-tab="${t.id}">${esc(t.label)}</button>`
+      ).join('');
+      tb.querySelectorAll('.nugs-tab-btn').forEach(btn =>
+        btn.addEventListener('click', () => {
+          if (tab === btn.dataset.tab) {
+            // Clicking the active "By Year" tab again pops back to the year
+            // picker — useful affordance now that By Year has two layers.
+            if (tab === 'year' && selectedYear) {
+              selectedYear = null;
+              filters.year = null;
+              filters.month = null;
+              refresh();
+            }
+            return;
+          }
+          tab = btn.dataset.tab;
+          // Switching tabs resets the By Year drill-down state.
+          selectedYear = null;
+          filters.year = null;
+          filters.month = null;
+          refresh();
+        }));
+    }
 
     function renderFilterBar() {
       const fc = $('nugsFilterControls');
       if (!fc) return;
+      // Filter bar is only meaningful inside the By Year drill-down. The
+      // year picker itself doesn't need filters — picking a year IS the
+      // filter at that level.
+      if (tab !== 'year' || !selectedYear) { fc.innerHTML = ''; return; }
 
-      const yearOpts = `<option value="">All Years</option>`
-        + years.map(y =>
-            `<option value="${y}"${filters.year === y ? ' selected' : ''}>${y} (${byYear[y].count})</option>`
-          ).join('');
-
-      const monthsForYear = filters.year ? Object.keys(byYear[filters.year]?.months ?? {}).sort() : [];
+      const monthsForYear = Object.keys(byYear[selectedYear]?.months ?? {}).sort();
       const monthOpts = `<option value="">All Months</option>`
         + monthsForYear.map(m => {
             const name  = MONTH_NAMES[parseInt(m, 10) - 1] ?? m;
-            const count = byYear[filters.year].months[m];
+            const count = byYear[selectedYear].months[m];
             return `<option value="${m}"${filters.month === m ? ' selected' : ''}>${name} (${count})</option>`;
           }).join('');
 
       fc.innerHTML = `
+        <button class="filter-btn nugs-back-btn" id="nfBackYears" title="Back to year picker">← All years</button>
+        <div class="filter-sep"></div>
         <button class="filter-btn${!filters.sortAsc ? ' active' : ''}" id="nfSortDesc">Date ▾</button>
         <button class="filter-btn${filters.sortAsc  ? ' active' : ''}" id="nfSortAsc">Date ▴</button>
         <div class="filter-sep"></div>
@@ -145,25 +255,121 @@ export async function nugsViewArtist(artist) {
         <button class="filter-btn${filters.type === 'audio' ? ' active' : ''}" id="nfTypeAudio">Audio</button>
         <button class="filter-btn${filters.type === 'video' ? ' active' : ''}" id="nfTypeVideo">🎬 Video</button>
         <div class="filter-sep"></div>
-        <select id="nfYear"  class="filter-select">${yearOpts}</select>
-        <select id="nfMonth" class="filter-select"${!filters.year ? ' disabled' : ''}>${monthOpts}</select>`;
+        <select id="nfMonth" class="filter-select">${monthOpts}</select>`;
 
+      $('nfBackYears').addEventListener('click',  () => {
+        selectedYear = null; filters.year = null; filters.month = null; refresh();
+      });
       $('nfSortDesc').addEventListener('click',  () => { filters.sortAsc = false; refresh(); });
       $('nfSortAsc').addEventListener('click',   () => { filters.sortAsc = true;  refresh(); });
       $('nfTypeAll').addEventListener('click',   () => { filters.type = 'all';   refresh(); });
       $('nfTypeAudio').addEventListener('click', () => { filters.type = 'audio'; refresh(); });
       $('nfTypeVideo').addEventListener('click', () => { filters.type = 'video'; refresh(); });
-      $('nfYear').addEventListener('change', e => {
-        filters.year = e.target.value || null; filters.month = null; refresh();
-      });
       $('nfMonth').addEventListener('change', e => {
         filters.month = e.target.value || null; refresh();
       });
     }
 
+    function getReleasesForTab() {
+      switch (tab) {
+        case 'recent':  return sortByRecent(allReleases);
+        case 'popular': return sortByPopular(allReleases);
+        case 'year':
+          // First layer of the By Year tab is the year picker, not a release
+          // list. We return [] here and let renderForTab() draw the year grid.
+          if (!selectedYear) return [];
+          // Second layer — apply the year + month filter combo.
+          filters.year = selectedYear;
+          return applyNugsFilters(allReleases, filters);
+        default: return allReleases;
+      }
+    }
+
+    function renderTabHint(list, sortNote) {
+      const el = $('nugsTabHint');
+      if (!el) return;
+      el.innerHTML = `<span class="nugs-tab-hint-count">${list.length} release${list.length === 1 ? '' : 's'}</span>
+        <span class="nugs-tab-hint-sep">·</span>
+        <span class="nugs-tab-hint-sort">${esc(sortNote)}</span>`;
+    }
+
+    /** Year-picker grid — first layer of the By Year tab. Each tile is a
+     *  square-ish card with the year as large typography and the show count
+     *  underneath. Reuses the .show-cards / .show-card classes so spacing
+     *  and responsive reflow match the release grid. */
+    function renderYearPicker() {
+      const el = $('nugsReleaseList');
+      if (!el) return;
+      if (!years.length) {
+        el.innerHTML = `<div class="empty-state" style="padding:24px;color:var(--text3);text-align:center">No releases for this artist</div>`;
+        return;
+      }
+      const heroColor = artistColor(artist.name);
+      el.innerHTML = `<div class="show-cards" id="nugsYearGrid">${years.map(y => `
+        <div class="show-card nugs-year-card" data-year="${esc(y)}">
+          <div class="show-card-art typo nugs-year-card-art" style="background:${heroColor}">
+            <div class="nugs-year-tile">${esc(y)}</div>
+            <div class="card-play">&#9654;</div>
+          </div>
+          <div class="show-card-body">
+            <div class="show-card-date">${esc(y)}</div>
+            <div class="show-card-venue">${byYear[y].count} release${byYear[y].count === 1 ? '' : 's'}</div>
+          </div>
+        </div>`).join('')}</div>`;
+      el.querySelectorAll('.nugs-year-card').forEach(card =>
+        card.addEventListener('click', () => {
+          selectedYear = card.dataset.year;
+          filters.year = selectedYear;
+          filters.month = null;
+          refresh();
+        }));
+    }
+
     function refresh() {
+      renderTabBar();
       renderFilterBar();
-      renderNugsReleaseRows(applyNugsFilters(allReleases, filters), artist);
+
+      // First layer of the By Year tab — show a year picker grid instead of
+      // any release list. Tab-hint reports the year count rather than a
+      // release count.
+      if (tab === 'year' && !selectedYear) {
+        renderTabHint(
+          { length: years.length },
+          'Pick a year to see all releases from that year'
+        );
+        // Custom message override for the year picker — render counts
+        // accurately ("N years" not "N releases").
+        const hintEl = $('nugsTabHint');
+        if (hintEl) {
+          hintEl.innerHTML = `<span class="nugs-tab-hint-count">${years.length} year${years.length === 1 ? '' : 's'}</span>
+            <span class="nugs-tab-hint-sep">·</span>
+            <span class="nugs-tab-hint-sort">Pick a year to see all releases from that year</span>`;
+        }
+        renderYearPicker();
+        return;
+      }
+
+      const list = getReleasesForTab();
+      let sortNote;
+      switch (tab) {
+        case 'recent':
+          sortNote = 'Sorted by date added to catalog (newest first)';
+          break;
+        case 'popular':
+          sortNote = 'Sorted by all-time sales';
+          break;
+        case 'year': {
+          const monthName = filters.month
+            ? MONTH_NAMES[parseInt(filters.month, 10) - 1] + ' '
+            : '';
+          sortNote = `Showing ${monthName}${selectedYear} (sorted by performance date)`;
+          break;
+        }
+        default:
+          sortNote = '';
+      }
+      renderTabHint(list, sortNote);
+      renderNugsReleaseGrid(list, artist);
     }
 
     const ci            = nugsCI();
@@ -184,9 +390,11 @@ export async function nugsViewArtist(artist) {
             </div>
           </div>
           <div id="artistBioCard" class="artist-bio loading"></div>
+          <div id="nugsArtistTabs" class="nugs-artist-tabs"></div>
+          <div id="nugsTabHint" class="nugs-tab-hint"></div>
           <div id="nugsFilterControls"></div>
         </div>
-        <div class="show-list" id="nugsReleaseList"></div>
+        <div id="nugsReleaseList"></div>
       </div>`;
     fadeIn(ci);
     injectArtistBio(artist.name);
@@ -210,17 +418,10 @@ export async function nugsViewRelease(artist, containerId) {
     const data      = await nugsApi.release(containerId);
     const container = data?.Response ?? data?.response ?? {};
     const tracks    = container.tracks ?? container.Tracks ?? [];
-    // Image URLs from the API are relative paths like /images/shows/foo.jpg.
-    // The actual assets are served by the nugscdn.net CDN, NOT www.nugs.net — so we
-    // must prepend the CDN base instead of www.nugs.net.  Absolute URLs are used as-is.
-    const rawImg     = container.img?.url || container.image || container.imageURL
-                     || container.coverArt || container.pic || null;
-    const showArtUrl = rawImg
-      ? (rawImg.startsWith('http')
-          ? rawImg
-          : `https://assets-01.nugscdn.net/livedownloads${rawImg.startsWith('/') ? rawImg : '/' + rawImg}?h=600`)
-      : null;
-    console.log('[Nugs Art Debug]', { rawImg, showArtUrl });
+    // Single source of truth for nugs cover-art URL resolution lives in
+    // api.js's nugsContainerImage. We request a larger image here for the
+    // show-detail hero (default is 300px wide for grid cards).
+    const showArtUrl = nugsContainerImage(container, { width: 600 });
 
     const displayDate = container.performanceDate ?? containerId;
     const venue       = [container.venueName, container.venueCity].filter(Boolean).join(' — ');

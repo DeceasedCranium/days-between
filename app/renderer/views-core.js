@@ -1718,6 +1718,17 @@ export function renderArtists(artists) {
         if (id) nugsViewArtist({ id, name, slug: `nugs-${id}`, _nugs: true });
       }));
 
+    // NOTE — sidebar avatar lazy-load was previously attempted here but
+    // disabled. Two issues forced the rollback:
+    //   1. The renderer iterates the entire Nugs catalog (~600 artists)
+    //      regardless of which letter slice is visible, producing a fetch
+    //      storm even with the cache.
+    //   2. catalog.artist (streamapi) doesn't return an avatar URL field,
+    //      so every fetch resolved to null anyway.
+    // Avatar wiring will return once we identify a usable image source —
+    // either an HTML scrape of the artist page or a different streamapi
+    // method. For now, the colored-initial tile is the canonical look.
+
     return;
   }
 
