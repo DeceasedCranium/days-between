@@ -9,12 +9,12 @@
     "test":  "node --test test/*.test.js"
   },
   "dependencies": {
-    "castv2-client": "*",
+    "castv2-client": "^1.2.0",
     "localforage": "^1.10.0",
-    "multicast-dns": "*"
+    "multicast-dns": "^7.2.5"
   },
   "optionalDependencies": {
-    "mpris-service": "*"
+    "mpris-service": "^2.1.2"
   },
   "devDependencies": {
     "electron": "^41.2.0",

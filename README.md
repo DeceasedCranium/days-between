@@ -75,9 +75,9 @@ Grab the latest installer from the [**Releases page**](https://github.com/Deceas
 **Pre-built installers** — no extra dependencies. Download from the [Actions tab](https://github.com/DeceasedCranium/days-between/actions) and run the installer for your platform.
 
 **Running from source** requires:
-- [Node.js](https://nodejs.org/) 18+
-- [Electron](https://www.electronjs.org/) 39+ (uses native ES modules — no bundler step)
-- On Arch / CachyOS: `sudo pacman -S electron39`
+- [Node.js](https://nodejs.org/) 22+
+- The Electron binary that `npm install` pulls (currently 41) — bundled, no system dependency
+- Native ES modules; no bundler step
 
 ---
 
@@ -90,12 +90,13 @@ git clone https://github.com/DeceasedCranium/days-between.git
 cd days-between
 npm install
 
-# Optional — needed for Last.fm scrobbling and Artist Radio
+# Optional — needed for Last.fm scrobbling, Artist Radio, and
+# setlist.fm authoritative play counts. The app boots fine without it
+# (those features just stay dormant).
 cp config.example.js config.js
-# Edit config.js and add your Last.fm API key
-# Free key at https://www.last.fm/api/account/create
+# Edit config.js and add your API keys (links inside the file).
 
-electron39 .
+npm start
 ```
 
 ### Build installers locally
