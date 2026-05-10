@@ -19,6 +19,10 @@ import {
   normaliseSongTitle,
   aggregateRelistenShowsToSongs,
 } from '../shared/helpers.js';
+import {
+  isAvailable as setlistFmAvailable,
+  getSongPlayCount,
+} from './setlistfm.js';
 
 // Per-artist cache of song catalogs we built from setlist scans (used as
 // a fallback when Relisten's /songs endpoint returns empty). Avoids
@@ -1380,9 +1384,9 @@ function renderSongStatsCard(artist, songName, found, allShowsByDate, attendedSe
   stats.innerHTML = `
     <div class="song-stats-grid">
       <div class="song-stat">
-        <div class="song-stat-num">${primaryPlayNum}</div>
-        <div class="song-stat-label">${esc(primaryPlayLbl)}</div>
-        ${totalIsLarger ? `<div class="song-stat-sub">${found.length} recorded</div>` : ''}
+        <div class="song-stat-num" id="songStatPrimary">${primaryPlayNum}</div>
+        <div class="song-stat-label" id="songStatPrimaryLabel">${esc(primaryPlayLbl)}</div>
+        <div class="song-stat-sub"  id="songStatSecondary">${totalIsLarger ? `${found.length} recorded` : ''}</div>
       </div>
       <div class="song-stat"><div class="song-stat-num">${esc(debut)}</div><div class="song-stat-label">Debut</div></div>
       <div class="song-stat"><div class="song-stat-num">${esc(last)}</div><div class="song-stat-label">Last played</div></div>
@@ -1390,6 +1394,7 @@ function renderSongStatsCard(artist, songName, found, allShowsByDate, attendedSe
         ? `<div class="song-stat song-stat-attended"><div class="song-stat-num">🎧 ${attendedCount}</div><div class="song-stat-label">You were there</div></div>`
         : ''}
     </div>
+    <div class="song-stats-setlistfm" id="songStatSetlistFm" style="display:none"></div>
     ${longestGap > 30 || longestRun > 1 ? `
       <div class="song-stats-extras">
         ${longestGap > 30 ? `<div><strong>Longest gap:</strong> ${gapYears} <span class="song-stats-sub">(${esc(longestGapRange)})</span></div>` : ''}
@@ -1413,6 +1418,65 @@ function renderSongStatsCard(artist, songName, found, allShowsByDate, attendedSe
 
   stats.querySelectorAll('.song-stats-best-row').forEach(row =>
     row.addEventListener('click', () => viewShow(artist, row.dataset.date)));
+
+  // ── setlist.fm enrichment ───────────────────────────────────────────────
+  // Asynchronously fetch the authoritative play count from setlist.fm. When
+  // it resolves, update the primary tile to use that number and surface the
+  // gap with whichever counts we already have. Stays dormant when:
+  //   - setlist.fm key not configured
+  //   - artist not on setlist.fm
+  //   - the API errors (logged but silent in UI)
+  enrichWithSetlistFm(artist, songName, found.length);
+}
+
+async function enrichWithSetlistFm(artist, songName, recordedCount) {
+  if (!setlistFmAvailable()) return;
+  const sfmEl       = document.getElementById('songStatSetlistFm');
+  const primaryEl   = document.getElementById('songStatPrimary');
+  const primaryLbl  = document.getElementById('songStatPrimaryLabel');
+  const secondaryEl = document.getElementById('songStatSecondary');
+  if (!sfmEl) return;
+
+  // First, see if we have a cached count without needing the network.
+  // We check by calling getSongPlayCount with progress that does nothing —
+  // if cached, returns instantly; otherwise triggers a fetch.
+  sfmEl.style.display = '';
+  sfmEl.innerHTML = `<span class="song-stats-sfm-loading">Fetching setlist.fm data…</span>`;
+
+  try {
+    let lastUpdate = 0;
+    const count = await getSongPlayCount(artist, songName, {
+      onProgress: (scanned, total) => {
+        // Throttle the UI update to once per 200ms — paginated fetches
+        // can fire many progress callbacks for big artists.
+        const now = Date.now();
+        if (now - lastUpdate < 200) return;
+        lastUpdate = now;
+        if (sfmEl) {
+          sfmEl.innerHTML = `<span class="song-stats-sfm-loading">Fetching setlist.fm data… ${scanned}/${total}</span>`;
+        }
+      },
+    });
+
+    if (count == null) {
+      sfmEl.style.display = 'none';
+      return;
+    }
+
+    // Got an authoritative number. Promote it to the primary tile and surface
+    // the recorded-vs-total gap (if any) as the small subtext.
+    if (primaryEl)   primaryEl.textContent = count;
+    if (primaryLbl)  primaryLbl.textContent = 'Total plays';
+    if (secondaryEl) {
+      secondaryEl.textContent = recordedCount < count
+        ? `${recordedCount} with Relisten recordings`
+        : '';
+    }
+    sfmEl.innerHTML = `<span class="song-stats-sfm">📋 Per setlist.fm</span>`;
+  } catch (err) {
+    console.warn('[setlistfm] enrichment failed:', err.message);
+    sfmEl.style.display = 'none';
+  }
 }
 
 /* ── Shows list views ────────────────────────────── */

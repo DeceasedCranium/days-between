@@ -383,6 +383,38 @@ export function aggregateRelistenShowsToSongs(showsWithTracks) {
   }));
 }
 
+/** Aggregate song counts from setlist.fm setlist objects. The setlist.fm
+ *  API ships setlists in this shape:
+ *
+ *    {
+ *      eventDate: "DD-MM-YYYY",
+ *      sets: { set: [{ song: [{ name: "Bertha" }, ...] }, ...] },
+ *      ...
+ *    }
+ *
+ *  This walks every set in every setlist, normalises the song titles,
+ *  and counts plays. Within a single setlist a song is counted at most
+ *  once even if listed twice (encore reprises, etc.). Returns a Map keyed
+ *  by `normaliseSongTitle(name)` → count. Pure / testable. */
+export function aggregateSongCountsFromSetlists(setlists) {
+  const counts = new Map();
+  for (const sl of setlists ?? []) {
+    const sets = sl?.sets?.set ?? [];
+    const seenInSetlist = new Set();
+    for (const s of sets) {
+      for (const song of (s?.song ?? [])) {
+        const title = song?.name;
+        if (!title) continue;
+        const key = normaliseSongTitle(title);
+        if (!key || seenInSetlist.has(key)) continue;
+        seenInSetlist.add(key);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+  }
+  return counts;
+}
+
 /** Determine whether a Relisten track title represents a play of the given
  *  target song. Splits on jam-band transition markers (`>`, `->`, `~`) and
  *  exact-matches each segment after normalisation, so:

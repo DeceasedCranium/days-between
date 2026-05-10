@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-REPO="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
 echo "Pulling latest..."
 git -C "$REPO" pull

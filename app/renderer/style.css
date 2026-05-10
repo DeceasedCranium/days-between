@@ -4782,3 +4782,23 @@ html, body {
   margin-right: 4px;
   vertical-align: middle;
 }
+
+/* ── setlist.fm enrichment row in song stats card ────────────────────────── */
+.song-stats-setlistfm {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--text3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.song-stats-sfm {
+  color: var(--accent);
+  font-weight: 600;
+}
+.song-stats-sfm-loading {
+  font-style: italic;
+  opacity: 0.7;
+}

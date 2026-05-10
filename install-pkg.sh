@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
 if [ $# -ge 1 ]; then
   PKG="$1"

@@ -32,6 +32,7 @@ import {
   dedupeRelistenSongs,
   trackContainsSong,
   aggregateRelistenShowsToSongs,
+  aggregateSongCountsFromSetlists,
 } from '../app/shared/helpers.js';
 
 
@@ -555,4 +556,55 @@ test('aggregateRelistenShowsToSongs dedupes within a single show', () => {
 test('aggregateRelistenShowsToSongs returns [] for empty input', () => {
   assert.deepEqual(aggregateRelistenShowsToSongs([]),         []);
   assert.deepEqual(aggregateRelistenShowsToSongs(undefined),  []);
+});
+
+
+/* ── aggregateSongCountsFromSetlists (setlist.fm) ────────────────────────── */
+
+test('aggregateSongCountsFromSetlists counts across multiple setlists', () => {
+  const setlists = [
+    { sets: { set: [
+      { song: [{ name: 'Bertha' }, { name: 'Truckin\'' }] },
+      { song: [{ name: 'Sugar Magnolia' }] },
+    ]}},
+    { sets: { set: [
+      { song: [{ name: 'Bertha' }, { name: 'Eyes of the World' }] },
+    ]}},
+    { sets: { set: [
+      { song: [{ name: 'Truckin\'' }] },
+    ]}},
+  ];
+  const counts = aggregateSongCountsFromSetlists(setlists);
+  assert.equal(counts.get('bertha'), 2);
+  assert.equal(counts.get("truckin'"), 2);
+  assert.equal(counts.get('sugar magnolia'), 1);
+  assert.equal(counts.get('eyes of the world'), 1);
+});
+
+test('aggregateSongCountsFromSetlists dedupes within a single setlist', () => {
+  const setlists = [
+    { sets: { set: [
+      { song: [{ name: 'Bertha' }] },
+      { song: [{ name: 'Bertha (encore)' }] },  // reprise — same setlist
+    ]}},
+  ];
+  const counts = aggregateSongCountsFromSetlists(setlists);
+  assert.equal(counts.get('bertha'), 1);
+});
+
+test('aggregateSongCountsFromSetlists normalises titles consistently', () => {
+  const setlists = [
+    { sets: { set: [{ song: [{ name: 'Bertha >' }] }]}},
+    { sets: { set: [{ song: [{ name: 'Bertha ->' }] }]}},
+    { sets: { set: [{ song: [{ name: '01 - Bertha' }] }]}},
+  ];
+  const counts = aggregateSongCountsFromSetlists(setlists);
+  assert.equal(counts.get('bertha'), 3);
+});
+
+test('aggregateSongCountsFromSetlists handles malformed input gracefully', () => {
+  assert.equal(aggregateSongCountsFromSetlists([]).size, 0);
+  assert.equal(aggregateSongCountsFromSetlists(undefined).size, 0);
+  assert.equal(aggregateSongCountsFromSetlists([{}]).size, 0);
+  assert.equal(aggregateSongCountsFromSetlists([{ sets: {} }]).size, 0);
 });
