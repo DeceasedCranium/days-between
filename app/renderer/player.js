@@ -379,12 +379,48 @@ let saveResumeStateExt = () => {};
 export function setSaveResumeState(fn) { saveResumeStateExt = fn; }
 
 /* ── Audio event handlers ────────────────────────── */
+// Diagnostic-rich error handler. The src URL is logged unconditionally
+// (always, not gated by daysBetweenDebug) because audio failures are
+// rare enough that the cost of logging is fine, and without the URL we
+// can't tell whether the cause was a missing archive.org file, a
+// browser-unsupported codec (e.g. .shn), or a mid-stream network drop.
+//
+// If the failure happened before any meaningful playback (currentTime <
+// 1 s), we auto-skip to the next track so the user isn't stuck mid-show.
+// If it happened mid-track, we show the toast and let the user decide —
+// auto-skip on a 70-minute Dark Star where you're 30 minutes in is the
+// wrong call.
 audio.addEventListener('error', () => {
-  const code = audio.error?.code;
+  const code     = audio.error?.code;
+  const message  = audio.error?.message || '(no message)';
+  const src      = audio.currentSrc || audio.src || '(empty)';
+  const progress = audio.currentTime || 0;
+  const track    = state.queue[state.queueIdx];
+  console.error('[player] audio error', {
+    code,
+    message,
+    src,
+    progress: progress.toFixed(2) + 's',
+    track:    track?.title,
+    show:     state.show?.display_date,
+    queueIdx: state.queueIdx,
+    queueLen: state.queue.length,
+  });
+
   if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-    showToast('Audio format not supported by this player');
+    if (progress < 1 && state.queueIdx < state.queue.length - 1) {
+      showToast('Track unavailable — skipping to next');
+      setTimeout(() => player.next(), 600);
+    } else {
+      showToast('Audio format not supported by this player');
+    }
   } else if (code === MediaError.MEDIA_ERR_NETWORK) {
     showToast('Stream network error — check connection');
+  } else if (code === MediaError.MEDIA_ERR_DECODE) {
+    showToast('Track failed to decode — skipping to next');
+    if (state.queueIdx < state.queue.length - 1) {
+      setTimeout(() => player.next(), 600);
+    }
   } else if (code) {
     showToast(`Playback error (code ${code})`);
   }
