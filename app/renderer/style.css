@@ -201,26 +201,26 @@ body {
   z-index: 20000;         /* above webview compositing layers */
 }
 /* Artist list: takes all remaining height and scrolls independently.
-   min-height:0 is the critical flexbox fix that prevents overflow.
-   padding-bottom reserves space so the last artist clears the sticky
-   Scrape Now footer (80 px) plus a little breathing room.             */
+   min-height:0 is the critical flexbox fix that prevents overflow.    */
 #artistList {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding-top: 0;
-  padding-bottom: 100px;
+  padding-bottom: 12px;   /* small breathing room after the last artist */
 }
-/* Pinned footer — always visible at the bottom of the sidebar regardless
-   of how far the artist list has scrolled.  Uses sticky+flex-shrink:0 so
-   it works in both flex-column and scroll-container contexts.            */
+/* Pinned footer — defined for completeness but currently unused.
+   Both Relisten and Nugs paths hide it via JS. The earlier `display: flex
+   !important` here forced the element to render even when JS set
+   display:none, leaving an 80 px gap at the bottom of the sidebar. The
+   inline `display:none` on the HTML element now wins; if a future view
+   shows it, JS just sets `style.display = 'flex'`.                       */
 .sidebar-footer {
   position: sticky;
   bottom: 0;
   flex-shrink: 0;
   height: 80px;
-  display: flex !important;
   align-items: center;
   justify-content: center;
   border-top: 1px solid var(--border);
