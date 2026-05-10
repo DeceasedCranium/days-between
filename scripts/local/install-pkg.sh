@@ -10,7 +10,9 @@
 
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# Script lives at <repo>/scripts/local/, so $REPO is two dirs up from
+# the resolved-symlink path of $0.
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 
 if [ $# -ge 1 ]; then
   PKG="$1"
