@@ -2,6 +2,8 @@
   "name": "days-between",
   "version": "2.0.0",
   "description": "Days Between — Live music streaming desktop app, powered by Relisten",
+  "author": "Days Between contributors",
+  "license": "MIT",
   "main": "app/main.js",
   "scripts": {
     "start": "electron .",
@@ -66,9 +68,11 @@
       "description": "Stream and archive 70,000+ live concert recordings from Relisten, Nugs.net, and Mixlr. Combines authoritative setlist.fm play counts, attended-show tracking, and personalized recommendations into a single library.",
       "maintainer": "Days Between <noreply@github.com>",
       "desktop": {
-        "Name": "Days Between",
-        "GenericName": "Live Music Player",
-        "Keywords": "music;audio;concerts;livestream;jam;phish;deadhead;nugs;relisten;"
+        "entry": {
+          "Name": "Days Between",
+          "GenericName": "Live Music Player",
+          "Keywords": "music;audio;concerts;livestream;jam;phish;deadhead;nugs;relisten;"
+        }
       }
     }
   }
