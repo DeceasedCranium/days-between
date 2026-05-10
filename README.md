@@ -22,7 +22,9 @@ Most Relisten clients show you the catalog. Days Between layers on **Setlist Int
 
 - **Personalized Show of the Day.** Welcome page picks a daily show tailored to artists you actually care about — blending attendance, listening history, and pinned artists into a single affinity score. A `[For You / Global]` toggle lets you switch back to the global trending pick anytime, and a small accent chip tells you why each show was chosen.
 
-- **Multi-source streaming, one sidebar.** Relisten / Nugs / Mixlr live as source tabs in the same sidebar. Search spans all three. "I Was There" entries from any source open in the right viewer (Nugs ones get a small `nugs` badge).
+- **Multi-source streaming, one sidebar.** Relisten / Nugs / Mixlr live as source tabs in the same sidebar. Search spans all three. "I Was There" entries from any source open in the right viewer (Nugs ones get a small `nugs` badge). The Nugs welcome page surfaces live webcasts, your pinned artists, and recently-added catalog releases — all album-cover-driven.
+  ![Nugs welcome page](docs/screenshots/nugs-home.png)
+  Per-artist pages mirror the Relisten layout — Recently Added / Most Popular / By Year / 🎵 Songs tabs, album-cover grid, and the same per-song stats you get on the Relisten side.
   ![Nugs artist page](docs/screenshots/nugs-artist.png)
 
 - **Five-band parametric EQ + Chromecast + Last.fm scrobbling + local archival downloads.** The streaming basics covered well, not bolted on.
