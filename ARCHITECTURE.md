@@ -25,7 +25,9 @@ days-between/
 │       ├── archive.js     ← Local archival queue (sequential downloader)
 │       ├── lastfm.js      ← Scrobbling + Wikipedia/Last.fm artist images
 │       ├── nugs-scraper.js← Renderer-side parser of ghost-scraped HTML
+│       ├── personalization.js ← Affinity blend → "For You" SOTD picker
 │       ├── player.js      ← Now-playing state, queue, repeat, shuffle
+│       ├── setlistfm.js   ← setlist.fm API client (rate-limited, cached)
 │       ├── state.js       ← In-memory cache + localforage persistence
 │       ├── theme.js       ← Theme / accent / density / glass settings
 │       ├── update-check.js← In-app GitHub release notifier
@@ -161,6 +163,14 @@ A small module of side-effect-free functions used in many places:
 - `resolveShowArtist` — Relisten `show → artist` resolution that walks
   the three different payload shapes the API ships.
 - `compareVersions` — semver-ish comparison for the update notifier.
+- `normaliseSongTitle` / `dedupeRelistenSongs` / `trackContainsSong` /
+  `aggregateRelistenShowsToSongs` / `aggregateNugsSongs` — Setlist
+  Intelligence (v1.12) song-catalog dedup and per-show aggregation.
+- `aggregateSongCountsFromSetlists` — collapse setlist.fm setlist payloads
+  into authoritative per-song play counts (v1.13).
+- `computeArtistAffinities` / `formatAffinityReason` — blend local signals
+  (attended / pinned / plays / favorited shows) into per-artist scores
+  with a human-readable "why" string (v1.14).
 
 These have **no browser or Node dependencies** by construction. Tests
 in `test/helpers.test.js` exercise the full surface; CI runs them
