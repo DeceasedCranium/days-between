@@ -114,16 +114,17 @@ jobs:
           body: |
             ## Install
 
-            | Platform | File |
-            |----------|------|
-            | macOS (Apple Silicon) | `.dmg` — open and drag to Applications |
-            | Windows | `Days Between Setup …exe` (installer) or `Days Between …exe` (portable) |
-            | Linux | `.AppImage` (`chmod +x` then run) or `.deb` (`sudo dpkg -i`) |
+            | Platform | File | How |
+            |---|---|---|
+            | **Linux** (any) | `.AppImage` | `chmod +x` and double-click — no install |
+            | **Linux** (Debian / Ubuntu) | `.deb` | `sudo dpkg -i Days-Between-*.deb` |
+            | **macOS** (Apple Silicon) | `.dmg` | Open, drag to Applications. **Unsigned** — right-click → Open the first time to bypass Gatekeeper. |
+            | **Windows** | `Setup …exe` (installer) or `…exe` (portable) | SmartScreen will warn — click "More info" → "Run anyway". |
 
-            > No Electron installation required — everything is bundled.
+            > No Electron installation required — everything is bundled. macOS and Windows binaries are unsigned (paid certificates aren't worth it for a personal-use project); the workarounds above are one-time per install.
 
             ---
 
-            See [README](https://github.com/DeceasedCranium/days-between#version-history) for full version history.
+            See [`CHANGELOG.md`](https://github.com/DeceasedCranium/days-between/blob/main/CHANGELOG.md) for the full version history. The [`README`](https://github.com/DeceasedCranium/days-between#readme) has screenshots and a quick tour of what's new.
           files: artifacts/**/*
           fail_on_unmatched_files: false

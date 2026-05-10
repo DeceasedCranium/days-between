@@ -1,6 +1,6 @@
 {
   "name": "days-between",
-  "version": "1.14.0",
+  "version": "2.0.0",
   "description": "Days Between — Live music streaming desktop app, powered by Relisten",
   "main": "app/main.js",
   "scripts": {
@@ -23,30 +23,53 @@
   "build": {
     "appId": "com.daysbetween.desktop",
     "productName": "Days Between",
+    "copyright": "© 2026 Days Between contributors. MIT licensed.",
     "files": [
       "app/**/*",
       "assets/**/*",
-      "!config.js"
+      "!config.js",
+      "!**/*.map"
     ],
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "assets"
     },
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "assets/icon.png",
+      "category": "public.app-category.music",
+      "identity": null
+    },
+    "dmg": {
+      "title": "Days Between ${version}"
     },
     "win": {
       "target": [
         "nsis",
         "portable"
-      ]
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
     },
     "linux": {
       "target": [
         "AppImage",
         "deb"
       ],
-      "category": "Audio",
-      "maintainer": "Days Between <noreply@github.com>"
+      "icon": "assets/icon.png",
+      "category": "AudioVideo;Audio;Player",
+      "synopsis": "Live concert recordings desktop app",
+      "description": "Stream and archive 70,000+ live concert recordings from Relisten, Nugs.net, and Mixlr. Combines authoritative setlist.fm play counts, attended-show tracking, and personalized recommendations into a single library.",
+      "maintainer": "Days Between <noreply@github.com>",
+      "desktop": {
+        "Name": "Days Between",
+        "GenericName": "Live Music Player",
+        "Keywords": "music;audio;concerts;livestream;jam;phish;deadhead;nugs;relisten;"
+      }
     }
   }
 }
