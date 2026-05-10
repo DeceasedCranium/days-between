@@ -1,6 +1,6 @@
 /* ── views-nugs.js — Nugs.net browsing views ──────────────────── */
 import { $, esc, fmt, artistColor, showToast, shuffle, confirmDialog } from './utils.js';
-import { state, nav, settings, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
+import { state, nav, settings, store, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
 import { nugsApi, nugsContainerImage } from './api.js';
 // Pure helpers that don't touch DOM/state/network — live in shared/helpers.js
 // for unit testability. See test/helpers.test.js.
@@ -9,6 +9,9 @@ import {
   applyNugsFilters,
   sortByRecent,
   sortByPopular,
+  aggregateNugsSongs,
+  normaliseSongTitle,
+  nugsSongsDiagnostics,
 } from '../shared/helpers.js';
 import { injectArtistBio, lastfmArtistImage } from './lastfm.js';
 import { nugsResolveAndPlay, handleNugsAuthError, setPlayerArt } from './player.js';
@@ -226,13 +229,17 @@ async function loadWelRecentSection() {
           if (!p) return;
           try {
             const all = [];
-            let offset = 1, batch;
+            const PAGE = nugsApi.CATALOG_PAGE_SIZE;
+            let offset = 1, batch, page = 0;
             do {
+              page++;
               const data = await nugsApi.catalog(p.id, offset);
               batch = data?.Response?.containers ?? data?.response?.containers ?? [];
               all.push(...batch);
-              offset += 100;
-            } while (batch.length === 100);
+              console.info('[nugs-catalog]', p.name, 'page', page, '— got', batch.length, 'containers (offset:', offset, ')');
+              offset += PAGE;
+            } while (batch.length === PAGE);
+            console.info('[nugs-catalog]', p.name, '— total fetched:', all.length);
             nugsReleasesCache[p.id] = all;
           } catch (err) {
             console.warn('[nugs-welcome] recent: catalog fetch failed for', p.name, err.message);
@@ -535,6 +542,220 @@ function renderNugsReleaseGrid(releases, artist) {
     card.addEventListener('click', () => nugsViewRelease(artist, card.dataset.cid)));
 }
 
+/* ── Nugs Songs tab — list view ─────────────────────────────────────────────
+ * Renders the artist's full song catalog (aggregated client-side from the
+ * cached release list — see aggregateNugsSongs). Each row shows the song
+ * title, play count, and an optional 🎧 marker if the user has attended a
+ * show containing the song. Click → drill into song detail (handled by
+ * the caller via the onPick callback). */
+function renderNugsSongsList(songCatalog, allReleases, artist, onPick) {
+  const el = $('nugsReleaseList');
+  if (!el) return;
+
+  // Build a Set of normalised song keys the user has heard at attended Nugs
+  // shows for this artist. Cheap because container.songs is already in cache.
+  const attendedNugsDates = new Set(
+    store.getAttended()
+      .filter(a => a.artistSlug === `nugs-${artist.id}`)
+      .map(a => a.date)
+  );
+  const heardKeys = new Set();
+  for (const c of allReleases) {
+    const isoDate = nugsIsoDate(c.performanceDate);
+    if (!attendedNugsDates.has(isoDate)) continue;
+    for (const s of (c.songs ?? [])) {
+      const title = typeof s === 'string' ? s : (s.songTitle ?? s.title ?? '');
+      const k = normaliseSongTitle(title);
+      if (k) heardKeys.add(k);
+    }
+  }
+
+  // Two sort modes — most-played and rarest. Track which is active locally.
+  let sortMode = 'popular';
+  function rendered() {
+    const sorted = sortMode === 'rare'
+      ? [...songCatalog].sort((a, b) => a.plays - b.plays || a.displayTitle.localeCompare(b.displayTitle))
+      : [...songCatalog].sort((a, b) => b.plays - a.plays || a.displayTitle.localeCompare(b.displayTitle));
+    return sorted;
+  }
+
+  function paint(filterText) {
+    const list = rendered().filter(s =>
+      !filterText || s.displayTitle.toLowerCase().includes(filterText));
+    if (!list.length) {
+      $('nugsSongList').innerHTML = `<div class="empty-state" style="padding:24px;color:var(--text3);text-align:center">No songs match.</div>`;
+      return;
+    }
+    $('nugsSongList').innerHTML = list.map(s => {
+      const heard = heardKeys.has(s.key);
+      return `
+        <div class="song-row" data-key="${esc(s.key)}">
+          <div class="song-name">${heard ? '<span class="song-heard" title="Heard live">🎧</span> ' : ''}${esc(s.displayTitle)}</div>
+          <div class="song-count">${s.plays} show${s.plays === 1 ? '' : 's'}</div>
+        </div>`;
+    }).join('');
+    $('nugsSongList').querySelectorAll('.song-row').forEach(row =>
+      row.addEventListener('click', () => onPick(row.dataset.key)));
+  }
+
+  el.innerHTML = `
+    <div class="section-header" style="margin-top:0">
+      <div></div>
+      <div class="song-sort-tabs">
+        <button class="song-sort-tab active" data-sort="popular">Most Played</button>
+        <button class="song-sort-tab" data-sort="rare">🦄 Rarities</button>
+      </div>
+    </div>
+    <input class="song-filter" id="nugsSongFilter" type="text" placeholder="Filter songs…" autocomplete="off" spellcheck="false">
+    <div class="song-list" id="nugsSongList"></div>`;
+  paint('');
+  $('nugsSongFilter').addEventListener('input', e => paint(e.target.value.toLowerCase().trim()));
+  el.querySelectorAll('.song-sort-tab').forEach(btn =>
+    btn.addEventListener('click', () => {
+      sortMode = btn.dataset.sort;
+      el.querySelectorAll('.song-sort-tab').forEach(b => b.classList.toggle('active', b === btn));
+      paint($('nugsSongFilter').value.toLowerCase().trim());
+    }));
+}
+
+/* ── Nugs Songs tab — song detail view ─────────────────────────────────────
+ * Stats card (debut / last / longest gap / longest run / top venues / attended
+ * count) + album-cover grid of every container that contains the song.
+ * Clicking a card opens the existing nugsViewRelease show detail. */
+function renderNugsSongDetail(songEntry, allReleases, artist) {
+  const el = $('nugsReleaseList');
+  if (!el) return;
+
+  // Pull the matching containers — newest first for the grid.
+  const cidSet = new Set(songEntry.containerIDs);
+  const containing = allReleases
+    .filter(c => cidSet.has(String(c.containerID)))
+    .sort((a, b) => Number(b.epochDateCreated ?? 0) - Number(a.epochDateCreated ?? 0));
+
+  // Stats — debut, last, longest gap, longest run, top venues, attended count.
+  const byDate = [...containing].sort((a, b) => {
+    const da = nugsIsoDate(a.performanceDate);
+    const db = nugsIsoDate(b.performanceDate);
+    return da < db ? -1 : 1;
+  });
+  const debut = nugsIsoDate(byDate[0]?.performanceDate ?? '');
+  const last  = nugsIsoDate(byDate[byDate.length - 1]?.performanceDate ?? '');
+
+  // Longest gap.
+  let longestGap = 0, gapRange = '';
+  for (let i = 1; i < byDate.length; i++) {
+    const a = new Date(nugsIsoDate(byDate[i - 1].performanceDate));
+    const b = new Date(nugsIsoDate(byDate[i].performanceDate));
+    const days = Math.round((b - a) / 86400000);
+    if (days > longestGap) {
+      longestGap = days;
+      gapRange = `${nugsIsoDate(byDate[i - 1].performanceDate)} → ${nugsIsoDate(byDate[i].performanceDate)}`;
+    }
+  }
+  const gapDisp = longestGap > 365 ? `${(longestGap / 365).toFixed(1)} years` : `${longestGap} days`;
+
+  // Longest run of consecutive shows containing the song (chronological).
+  const allByDate = [...allReleases].sort((a, b) => {
+    const da = nugsIsoDate(a.performanceDate);
+    const db = nugsIsoDate(b.performanceDate);
+    return da < db ? -1 : 1;
+  });
+  const songDateSet = new Set(byDate.map(c => nugsIsoDate(c.performanceDate)));
+  let longestRun = 0, currentRun = 0, runEndDate = '';
+  for (const s of allByDate) {
+    const iso = nugsIsoDate(s.performanceDate);
+    if (songDateSet.has(iso)) {
+      currentRun++;
+      if (currentRun > longestRun) { longestRun = currentRun; runEndDate = iso; }
+    } else {
+      currentRun = 0;
+    }
+  }
+
+  // Top venues.
+  const venueCounts = new Map();
+  for (const c of byDate) {
+    const v = c.venueName ?? '';
+    if (!v) continue;
+    venueCounts.set(v, (venueCounts.get(v) ?? 0) + 1);
+  }
+  const topVenues = [...venueCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([n, k]) => `${esc(n)} (${k})`).join(' · ');
+
+  // Attended count for shows containing this song.
+  const attendedDates = new Set(
+    store.getAttended()
+      .filter(a => a.artistSlug === `nugs-${artist.id}`)
+      .map(a => a.date)
+  );
+  const attendedCount = byDate.filter(c =>
+    attendedDates.has(nugsIsoDate(c.performanceDate))).length;
+
+  el.innerHTML = `
+    <div class="section-header" style="margin-top:0">
+      <div>
+        <div class="section-title">${esc(songEntry.displayTitle)}</div>
+        <div class="section-subtitle">${songEntry.plays} show${songEntry.plays === 1 ? '' : 's'} · ${esc(artist.name)}</div>
+      </div>
+      <button class="action-btn" id="btnNugsSongBack">← All Songs</button>
+    </div>
+    <div class="song-stats-card">
+      <div class="song-stats-grid">
+        <div class="song-stat"><div class="song-stat-num">${songEntry.plays}</div><div class="song-stat-label">Total plays</div></div>
+        <div class="song-stat"><div class="song-stat-num">${esc(debut)}</div><div class="song-stat-label">Debut</div></div>
+        <div class="song-stat"><div class="song-stat-num">${esc(last)}</div><div class="song-stat-label">Last played</div></div>
+        ${attendedCount > 0
+          ? `<div class="song-stat song-stat-attended"><div class="song-stat-num">🎧 ${attendedCount}</div><div class="song-stat-label">You were there</div></div>`
+          : ''}
+      </div>
+      ${(longestGap > 30 || longestRun > 1 || topVenues) ? `
+        <div class="song-stats-extras">
+          ${longestGap > 30 ? `<div><strong>Longest gap:</strong> ${gapDisp} <span class="song-stats-sub">(${esc(gapRange)})</span></div>` : ''}
+          ${longestRun > 1   ? `<div><strong>Longest run:</strong> ${longestRun} shows in a row <span class="song-stats-sub">(through ${esc(runEndDate)})</span></div>` : ''}
+          ${topVenues       ? `<div><strong>Top venues:</strong> ${topVenues}</div>` : ''}
+        </div>` : ''}
+    </div>`;
+
+  // Append the album-cover grid of containers using the same renderer the
+  // other tabs use — clicking a card opens the existing show detail.
+  const grid = document.createElement('div');
+  grid.id = 'nugsSongGrid';
+  el.appendChild(grid);
+  // Move the renderer's output into our grid div by re-querying #nugsReleaseList
+  // would reset — easier to inline the render inline:
+  grid.innerHTML = `<div class="show-cards">${containing.map(c => {
+    const isVideo  = !!(c.videoURL || c.videoChapters || c.containerTypeStr?.toLowerCase().includes('video'));
+    const date     = nugsIsoDate(c.performanceDate) || String(c.containerID);
+    const venue    = [c.venueName, c.venueCity].filter(Boolean).join(' — ');
+    const imgUrl   = nugsContainerImage(c, { width: 360 });
+    const heroColor = artistColor(artist.name);
+    const artInner = imgUrl
+      ? `<img src="${esc(imgUrl)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'art-init',textContent:'${esc((artist.name[0]??'?').toUpperCase())}'}))">`
+      : `<span class="art-init">${esc((artist.name[0]??'?').toUpperCase())}</span>`;
+    return `
+      <div class="show-card" data-cid="${esc(String(c.containerID))}">
+        <div class="show-card-art${imgUrl ? '' : ' typo'}" style="background:${heroColor}">
+          ${artInner}
+          <div class="card-play">&#9654;</div>
+        </div>
+        <div class="show-card-body">
+          <div class="show-card-date">${esc(date)}</div>
+          <div class="show-card-venue">${esc(venue)}</div>
+          <div class="show-card-badges">${isVideo ? '<span class="badge" title="Video release">🎬</span>' : ''}</div>
+        </div>
+      </div>`;
+  }).join('')}</div>`;
+
+  $('btnNugsSongBack')?.addEventListener('click', () => {
+    // Caller (refresh) will redraw the catalog when selectedSongKey resets.
+    // We don't have direct access to it here; dispatch a custom event so the
+    // outer scope can react.
+    window.dispatchEvent(new CustomEvent('nugs-song-back'));
+  });
+  grid.querySelectorAll('.show-card').forEach(card =>
+    card.addEventListener('click', () => nugsViewRelease(artist, card.dataset.cid)));
+}
+
 /* ── nugsViewArtist ────────────────────────────────────────────────────────
  * Tabbed artist page modeled on the Relisten side:
  *   Recently Added | Playlists | Most Popular | By Year
@@ -551,6 +772,7 @@ const NUGS_TABS = [
   { id: 'recent',  label: 'Recently Added' },
   { id: 'popular', label: 'Most Popular' },
   { id: 'year',    label: 'By Year' },
+  { id: 'songs',   label: '🎵 Songs' },
 ];
 
 export async function nugsViewArtist(artist) {
@@ -560,13 +782,17 @@ export async function nugsViewArtist(artist) {
   nugsCI().innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
   try {
     if (!nugsReleasesCache[artist.id]) {
-      let all = [], offset = 1, batch;
+      let all = [], offset = 1, batch, page = 0;
+      const PAGE = nugsApi.CATALOG_PAGE_SIZE;
       do {
+        page++;
         const data = await nugsApi.catalog(artist.id, offset);
         batch = data?.Response?.containers ?? data?.response?.containers ?? [];
         all   = all.concat(batch);
-        offset += 100;
-      } while (batch.length === 100);
+        console.info('[nugs-catalog]', artist.name, 'page', page, '— got', batch.length, 'containers (offset:', offset, ')');
+        offset += PAGE;
+      } while (batch.length === PAGE);
+      console.info('[nugs-catalog]', artist.name, '— total fetched:', all.length);
       nugsReleasesCache[artist.id] = all;
     }
     renderArtists(state.filteredArtists);
@@ -590,7 +816,21 @@ export async function nugsViewArtist(artist) {
     // selectedYear is null while the By Year tab shows the year-picker grid;
     // it becomes a year string once the user drills into a year.
     let selectedYear = null;
+    // selectedSongKey is null while the Songs tab shows the song catalog;
+    // it becomes the normalised key once the user drills into a song.
+    let selectedSongKey = null;
+    let songCatalog = null; // memoised across tab switches
     const filters = { sortAsc: false, year: null, month: null, type: 'all' };
+
+    // The Nugs song-detail back-button dispatches this so the outer scope
+    // can pop selectedSongKey and re-render the catalog list. We replace
+    // any previous listener (from a prior artist visit) so handlers don't
+    // accumulate and write into a stale closure's DOM.
+    if (window._nugsSongBackHandler) {
+      window.removeEventListener('nugs-song-back', window._nugsSongBackHandler);
+    }
+    window._nugsSongBackHandler = () => { selectedSongKey = null; refresh(); };
+    window.addEventListener('nugs-song-back', window._nugsSongBackHandler);
 
     function renderTabBar() {
       const tb = $('nugsArtistTabs');
@@ -601,19 +841,15 @@ export async function nugsViewArtist(artist) {
       tb.querySelectorAll('.nugs-tab-btn').forEach(btn =>
         btn.addEventListener('click', () => {
           if (tab === btn.dataset.tab) {
-            // Clicking the active "By Year" tab again pops back to the year
-            // picker — useful affordance now that By Year has two layers.
-            if (tab === 'year' && selectedYear) {
-              selectedYear = null;
-              filters.year = null;
-              filters.month = null;
-              refresh();
-            }
+            // Clicking the active two-layer tab pops back to the picker.
+            if (tab === 'year'  && selectedYear)    { selectedYear = null; filters.year = null; filters.month = null; refresh(); }
+            if (tab === 'songs' && selectedSongKey) { selectedSongKey = null; refresh(); }
             return;
           }
           tab = btn.dataset.tab;
-          // Switching tabs resets the By Year drill-down state.
+          // Switching tabs resets every drill-down state.
           selectedYear = null;
+          selectedSongKey = null;
           filters.year = null;
           filters.month = null;
           refresh();
@@ -719,6 +955,49 @@ export async function nugsViewArtist(artist) {
     function refresh() {
       renderTabBar();
       renderFilterBar();
+
+      // ── Songs tab ───────────────────────────────────────────────────────
+      // Two layers: catalog list, then song detail (stats + shows containing).
+      if (tab === 'songs') {
+        if (!songCatalog) {
+          songCatalog = aggregateNugsSongs(allReleases);
+          // One-shot diagnostic so we can see what the catalog response
+          // actually contains. If `withSetlist` is much less than
+          // `totalContainers`, Nugs is shipping sparse setlist data and
+          // play counts will look low — that's the upstream limitation
+          // we'd address with setlist.fm in v1.13.
+          const d = nugsSongsDiagnostics(allReleases);
+          console.info('[nugs-songs]', artist.name, '— containers:',
+            d.totalContainers, '· with setlist:', d.withSetlist,
+            `(${d.coveragePct}%)`, '· avg tracks/show:', d.avgTracksPerShow,
+            '· unique songs:', songCatalog.length);
+          if (d.sampleEmpty) {
+            console.info('[nugs-songs] sample container WITHOUT setlist:', d.sampleEmpty);
+          }
+          if (d.sampleFilled) {
+            console.info('[nugs-songs] sample container WITH setlist:', d.sampleFilled);
+          }
+        }
+        if (!selectedSongKey) {
+          renderNugsSongsList(songCatalog, allReleases, artist, key => {
+            selectedSongKey = key;
+            refresh();
+          });
+          // Custom hint copy for the catalog view.
+          const hintEl = $('nugsTabHint');
+          if (hintEl) {
+            hintEl.innerHTML = `<span class="nugs-tab-hint-count">${songCatalog.length} song${songCatalog.length === 1 ? '' : 's'}</span>
+              <span class="nugs-tab-hint-sep">·</span>
+              <span class="nugs-tab-hint-sort">Pick a song to see stats and the shows containing it</span>`;
+          }
+          return;
+        }
+        // Song detail view.
+        const songEntry = songCatalog.find(s => s.key === selectedSongKey);
+        if (!songEntry) { selectedSongKey = null; refresh(); return; }
+        renderNugsSongDetail(songEntry, allReleases, artist);
+        return;
+      }
 
       // First layer of the By Year tab — show a year picker grid instead of
       // any release list. Tab-hint reports the year count rather than a
@@ -869,6 +1148,7 @@ export async function nugsViewRelease(artist, containerId) {
                 ? `<button class="action-btn${hasAudioTracks ? '' : ' primary'}" id="btnNugsWatchVideo">🎬 Watch Video</button>` : ''}
               ${hasAudioTracks
                 ? `<button class="action-btn" id="btnNugsDownloadShow" title="Archive every track to your Music folder">⬇ Download Show</button>` : ''}
+              <button class="action-btn attended-btn${store.isAttended(`nugs-${artist.id}`, nugsIsoDate(displayDate)) ? ' active' : ''}" id="btnNugsAttended">📍 I Was There</button>
             </div>
           </div>
         </div>
@@ -978,6 +1258,28 @@ export async function nugsViewRelease(artist, containerId) {
         state.artist   = artist;
         state.show     = playShow;
         nugsResolveAndPlay(state.queue[0], artist, playShow);
+      });
+
+      // 📍 "I was there" — record attendance using the same db-attended store
+      // that powers the Relisten side. Nugs entries use the slug pattern
+      // `nugs-<artistID>` so the Library list can route them to nugsViewRelease.
+      $('btnNugsAttended')?.addEventListener('click', () => {
+        const btn = $('btnNugsAttended');
+        const slug = `nugs-${artist.id}`;
+        const isoDate = nugsIsoDate(displayDate);
+        const synthArtist = { slug, name: artist.name };
+        const synthShow = {
+          display_date: isoDate,
+          venue: {
+            name:     container.venueName ?? '',
+            location: [container.venueCity, container.venueState].filter(Boolean).join(', '),
+          },
+          // Stash the containerID so the Library list can re-open the right Nugs page.
+          _nugsContainerId: String(containerId),
+        };
+        const nowAttended = store.toggleAttended(synthArtist, synthShow);
+        btn.classList.toggle('active', nowAttended);
+        showToast(nowAttended ? '📍 Marked as attended!' : 'Attendance removed');
       });
 
       // ⬇ Download Show — archive nugs audio tracks. Synthetic source carries

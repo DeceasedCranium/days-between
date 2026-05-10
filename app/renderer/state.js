@@ -196,14 +196,19 @@ export const store = {
     if (idx >= 0) {
       all.splice(idx, 1);
     } else {
-      all.unshift({
+      const entry = {
         artistSlug:    artist.slug,
         artistName:    artist.name,
         date:          show.display_date,
         venueName:     show.venue?.name     ?? '',
         venueLocation: show.venue?.location ?? '',
         markedAt:      new Date().toISOString(),
-      });
+      };
+      // Nugs entries carry the containerID so the Library router can re-open
+      // them via nugsViewRelease(artist, containerID) instead of falling
+      // through to the Relisten viewShow path.
+      if (show._nugsContainerId) entry.nugsContainerId = String(show._nugsContainerId);
+      all.unshift(entry);
     }
     _set('db-attended', all);
     return idx < 0;

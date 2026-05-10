@@ -184,21 +184,35 @@ export function viewBookmarks(activeTab = 'bookmarks') {
     }
     safeInnerHTML(container, `
       <div class="bk-list">
-        ${attended.map((a, i) => `
-          <div class="bk-row" data-idx="${i}" data-slug="${esc(a.artistSlug)}" data-date="${esc(a.date)}">
+        ${attended.map((a, i) => {
+          // Nugs entries carry a containerId; we route them to nugsViewRelease
+          // via a dynamic import so the Library list works for both sources.
+          const isNugs = !!a.nugsContainerId;
+          return `
+          <div class="bk-row" data-idx="${i}" data-slug="${esc(a.artistSlug)}" data-date="${esc(a.date)}"${isNugs ? ` data-nugs-container="${esc(a.nugsContainerId)}"` : ''}>
             <div class="bk-icon">📍</div>
             <div class="bk-info">
-              <div class="bk-track">${esc(a.artistName)} — ${esc(a.date)}</div>
+              <div class="bk-track">${esc(a.artistName)} — ${esc(a.date)}${isNugs ? ' <span class="badge" style="background:var(--accent);color:#fff;font-size:9px;padding:1px 6px">nugs</span>' : ''}</div>
               <div class="bk-sub">${esc(a.venueName)}${a.venueLocation ? ' · ' + esc(a.venueLocation) : ''}</div>
             </div>
             <button class="bk-del" data-idx="${i}" title="Remove">✕</button>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>`);
     container.querySelectorAll('.bk-row').forEach(row =>
       row.addEventListener('click', e => {
         if (e.target.classList.contains('bk-del')) return;
         const { slug, date } = row.dataset;
-        if (!slug || !date) return;
+        const containerId   = row.dataset.nugsContainer;
+        if (!slug) return;
+        if (containerId && slug.startsWith('nugs-')) {
+          // Nugs path — re-open the original release.
+          const id = slug.replace(/^nugs-/, '');
+          import('./views-nugs.js').then(m =>
+            m.nugsViewRelease({ id, name: row.querySelector('.bk-track')?.textContent ?? '', _nugs: true }, containerId));
+          return;
+        }
+        if (!date) return;
         const artist = state.artists.find(a => a.slug === slug) || { name: slug, slug };
         viewShow(artist, date);
       }));

@@ -175,6 +175,235 @@ export function resolveShowArtist(show, artistsCache = []) {
 }
 
 
+/* ── Song-title normalisation (Nugs Songs tab) ────────────────────────────
+ * Nugs has no canonical Song table — each container ships its raw track
+ * titles. To dedupe "Deal", "Deal >", "Deal (encore)", "01 - Deal", and
+ * "gd07191985-deal-set1" into a single bucket we strip common decorations:
+ *   - Leading track numbers ("01 - ", "12. ")
+ *   - Filename prefixes ("gd07191985-")
+ *   - Trailing arrows / markers (" >", " ->", " (set 1)", " (encore)", "~")
+ *   - Whitespace + case
+ * Returns the lowercased canonical key. Use the original title in the UI;
+ * the key is for grouping only.
+ * ──────────────────────────────────────────────────────────────────────── */
+export function normaliseSongTitle(s) {
+  if (!s || typeof s !== 'string') return '';
+  let t = s.trim();
+  // Strip leading track-number prefix: "01 - ", "12. ", "t01 "
+  t = t.replace(/^t?\d{1,3}\s*[-.\s]\s*/i, '');
+  // Strip filename-style prefix: "gd07191985-"
+  t = t.replace(/^[a-z]+\d{6,8}-/i, '');
+  // Strip trailing decorations: arrows, set markers, encore tags, jam suffixes
+  t = t.replace(/\s*[~>\-]+\s*$/g, '');                    // " >", " -", " ~"
+  t = t.replace(/\s*->\s*$/, '');                          // " -> "
+  t = t.replace(/\s*\((set\s*\d|encore|reprise|jam|cont\.|continued|partial)[^)]*\)\s*$/i, '');
+  t = t.replace(/\s*\[(set\s*\d|encore|reprise|jam)[^\]]*\]\s*$/i, '');
+  // Collapse whitespace
+  t = t.replace(/\s+/g, ' ').trim();
+  return t.toLowerCase();
+}
+
+/** Best display title for a normalised group — picks the most-frequent
+ *  variant and prefers the title-cased one to ALLCAPS. */
+export function pickDisplayTitle(titles) {
+  if (!titles?.length) return '';
+  const counts = new Map();
+  for (const t of titles) counts.set(t, (counts.get(t) ?? 0) + 1);
+  const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  return ordered[0][0];
+}
+
+/** Pull the most useful song-title array off a Nugs container.
+ *
+ *  Different Nugs endpoints + different artist tiers return setlist data in
+ *  different shapes:
+ *    • catalog.containersAll → `songs: [{songTitle, ...}, ...]` (most common)
+ *    • catalog.containersAll → `songList: [...]` for some artists
+ *    • catalog.container     → `tracks: [{songTitle, ...}, ...]` (per-show
+ *                              detail endpoint, fuller track listing)
+ *  We try each in turn and return the first non-empty one. Items can be
+ *  raw strings or objects — both shapes are handled. */
+export function pickContainerTracklist(c) {
+  if (!c) return [];
+  for (const field of ['songs', 'songList', 'tracks', 'Tracks', 'setList']) {
+    const arr = c[field];
+    if (Array.isArray(arr) && arr.length) return arr;
+  }
+  return [];
+}
+
+/** Build a map of normalised-key → { displayTitle, plays, containerIDs }
+ *  from a list of Nugs containers. Used to drive the Nugs Songs tab. */
+export function aggregateNugsSongs(containers) {
+  const map = new Map();
+  for (const c of containers ?? []) {
+    const items = pickContainerTracklist(c);
+    const titles = items.map(s =>
+      typeof s === 'string' ? s : (s.songTitle ?? s.title ?? s.name ?? '')
+    ).filter(Boolean);
+    const seenInThisShow = new Set();
+    for (const title of titles) {
+      const key = normaliseSongTitle(title);
+      if (!key) continue;
+      // Don't double-count the same song twice in one show.
+      if (seenInThisShow.has(key)) continue;
+      seenInThisShow.add(key);
+      let entry = map.get(key);
+      if (!entry) {
+        entry = { key, titles: [], plays: 0, containerIDs: new Set() };
+        map.set(key, entry);
+      }
+      entry.titles.push(title);
+      entry.plays++;
+      entry.containerIDs.add(String(c.containerID));
+    }
+  }
+  // Finalise: pick display title, freeze container set into array.
+  return [...map.values()].map(e => ({
+    key:           e.key,
+    displayTitle:  pickDisplayTitle(e.titles),
+    plays:         e.plays,
+    containerIDs:  [...e.containerIDs],
+  }));
+}
+
+/** Diagnostic counts useful when the Songs tab returns fewer plays than
+ *  expected — answers "is the data actually in the catalog response?". */
+export function nugsSongsDiagnostics(containers) {
+  const total = containers?.length ?? 0;
+  let withSongs = 0, totalTracks = 0, sampleEmpty = null, sampleFilled = null;
+  for (const c of containers ?? []) {
+    const items = pickContainerTracklist(c);
+    if (items.length) {
+      withSongs++;
+      totalTracks += items.length;
+      if (!sampleFilled) sampleFilled = c;
+    } else if (!sampleEmpty) {
+      sampleEmpty = c;
+    }
+  }
+  return {
+    totalContainers:  total,
+    withSetlist:      withSongs,
+    coveragePct:      total ? Math.round((withSongs / total) * 100) : 0,
+    totalTracks,
+    avgTracksPerShow: withSongs ? Math.round(totalTracks / withSongs) : 0,
+    sampleEmpty,
+    sampleFilled,
+  };
+}
+
+/** Group a list of Relisten Song objects by their normalised title.
+ *
+ *  Relisten's canonical Song table is mostly clean, but artists with messy
+ *  taper data sometimes ingest "Bertha", "Bertha >", and "Bertha ->" as
+ *  three separate Song rows. This helper merges them: groups by
+ *  `normaliseSongTitle(name)`, sums `shows_played_at`, and picks the
+ *  cleanest variant (shortest + no decoration markers) as the display name.
+ *  Keeps the original variants on `_variants` for debugging.
+ *
+ *  Defensive: Relisten's /songs endpoint sometimes returns an envelope
+ *  `{success, error_code, data}` instead of a raw array (typically when
+ *  the artist has no song-catalog data). We unwrap and tolerate empty.
+ *
+ *  Pure function — call it after `api.songs(slug)` resolves. */
+export function dedupeRelistenSongs(songs) {
+  // Unwrap envelope if present.
+  if (songs && !Array.isArray(songs) && typeof songs === 'object') {
+    songs = Array.isArray(songs.data) ? songs.data
+          : Array.isArray(songs.songs) ? songs.songs
+          : [];
+  }
+  if (!Array.isArray(songs)) songs = [];
+
+  const groups = new Map();
+  for (const s of songs) {
+    if (!s?.name) continue;
+    const key = normaliseSongTitle(s.name);
+    if (!key) continue;
+    let g = groups.get(key);
+    if (!g) {
+      g = { ...s, name: s.name, shows_played_at: 0, _variants: [] };
+      groups.set(key, g);
+    }
+    g.shows_played_at += s.shows_played_at ?? 0;
+    g._variants.push(s);
+    // Pick the cleanest display name: prefer one without trailing decoration
+    // markers, then shorter wins on ties.
+    const cleaner =
+      hasDecoration(g.name) && !hasDecoration(s.name) ||
+      (!hasDecoration(g.name) === !hasDecoration(s.name) && s.name.length < g.name.length);
+    if (cleaner) g.name = s.name;
+  }
+  return [...groups.values()];
+}
+
+function hasDecoration(name) {
+  return /[~>]|->/.test(name);
+}
+
+/** Aggregate per-show track lists into a Songs-tab-shaped list. Used as
+ *  a fallback when Relisten's `/songs` endpoint is empty for an artist
+ *  (Dead & Company is the canonical example) — we walk every show's
+ *  setlist and build the canonical song list ourselves.
+ *
+ *  Input: array of "full show" objects (each with `sources[].sets[].tracks[]`).
+ *  Output: same shape as `dedupeRelistenSongs` returns:
+ *    [{ name, shows_played_at }, ...]
+ *
+ *  Composite tracks like "Bertha > Eyes of the World" are split on
+ *  transition markers so both songs register. Within a single show, the
+ *  same song is counted at most once. */
+export function aggregateRelistenShowsToSongs(showsWithTracks) {
+  const map = new Map();
+  for (const show of showsWithTracks ?? []) {
+    const tracks = (show?.sources ?? []).flatMap(src =>
+      (src.sets ?? []).flatMap(s => s.tracks ?? [])
+    );
+    const seenInThisShow = new Set();
+    for (const t of tracks) {
+      if (!t?.title) continue;
+      for (const seg of String(t.title).split(/\s*(?:->|>|~)\s*/)) {
+        const key = normaliseSongTitle(seg);
+        if (!key || seenInThisShow.has(key)) continue;
+        seenInThisShow.add(key);
+        let entry = map.get(key);
+        if (!entry) {
+          entry = { key, titles: [], plays: 0 };
+          map.set(key, entry);
+        }
+        entry.titles.push(seg.trim());
+        entry.plays++;
+      }
+    }
+  }
+  return [...map.values()].map(e => ({
+    name: pickDisplayTitle(e.titles),
+    shows_played_at: e.plays,
+  }));
+}
+
+/** Determine whether a Relisten track title represents a play of the given
+ *  target song. Splits on jam-band transition markers (`>`, `->`, `~`) and
+ *  exact-matches each segment after normalisation, so:
+ *
+ *    "Bertha"                          → matches "bertha"
+ *    "Bertha >"                        → matches "bertha"
+ *    "Bertha > Eyes of the World"      → matches "bertha" AND "eyes of the world"
+ *    "01 - Bertha (encore)"            → matches "bertha"
+ *    "Bertha Tease"                    → does NOT match "bertha" (own thing)
+ *
+ *  This is more precise than substring matching while still capturing the
+ *  composite-track convention that's standard in jam-band setlists. */
+export function trackContainsSong(trackTitle, targetKey) {
+  if (!trackTitle || !targetKey) return false;
+  const segments = String(trackTitle).split(/\s*(?:->|>|~)\s*/);
+  for (const seg of segments) {
+    if (normaliseSongTitle(seg) === targetKey) return true;
+  }
+  return false;
+}
+
 /* ── Semver-ish comparison (update notifier) ──────────────────────────────── */
 
 /** Compare two semver-ish strings (e.g. "1.9.0" vs "1.10.0").

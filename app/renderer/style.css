@@ -4683,3 +4683,102 @@ html, body {
   font-size: 11px;
   padding: 5px 10px;
 }
+
+/* ── Song stats card (top of viewSongShows) ──────────────────────────────── */
+.song-stats-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.song-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.song-stat {
+  text-align: center;
+  padding: 8px;
+  background: var(--bg3);
+  border-radius: 8px;
+}
+.song-stat-num {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.song-stat-label {
+  font-size: 10px;
+  color: var(--text3);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+}
+.song-stat-attended { background: color-mix(in srgb, var(--accent) 15%, var(--bg3)); }
+.song-stat-sub {
+  font-size: 10px;
+  color: var(--text3);
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.song-stats-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text2);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.song-stats-extras strong { color: var(--text); font-weight: 700; }
+.song-stats-sub { color: var(--text3); }
+
+.song-stats-best-label {
+  font-size: 11px;
+  color: var(--text3);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+.song-stats-best-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.song-stats-best-row {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--bg3);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease;
+  font-size: 12px;
+}
+.song-stats-best-row:hover { background: var(--surface2); }
+.song-stats-best-date  { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.song-stats-best-venue {
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.song-stats-best-rating { color: var(--accent); font-size: 11px; }
+
+/* "Heard live" indicator on Songs tab rows */
+.song-heard {
+  display: inline-block;
+  font-size: 12px;
+  margin-right: 4px;
+  vertical-align: middle;
+}

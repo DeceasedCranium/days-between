@@ -101,10 +101,15 @@ export const nugsApi = {
     });
   },
 
-  async catalog(artistId, offset = 0) {
+  /** Page size used by both `catalog()` and the renderer's pagination loop.
+   *  Exported so the loop's "did we get a full page?" check stays in sync. */
+  CATALOG_PAGE_SIZE: 500,
+
+  async catalog(artistId, offset = 1) {
     const auth = nugsAuth.get();
     const url  = `${NUGS_STREAM}/api.aspx?method=catalog.containersAll`
-      + `&artistList=${artistId}&limit=100&startOffset=${offset}&availType=1&vdisp=1`;
+      + `&artistList=${artistId}&limit=${nugsApi.CATALOG_PAGE_SIZE}`
+      + `&startOffset=${offset}&availType=1&vdisp=1`;
     const r = await fetch(url, {
       headers: {
         'User-Agent': NUGS_UA,

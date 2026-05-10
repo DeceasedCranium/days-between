@@ -12,7 +12,18 @@ import {
 import { nugsViewArtist, nugsViewRelease, searchNugsLocal } from './views-nugs.js';
 import { resolveArtistId } from './nugs-scraper.js';
 import { downloadFullShow } from './archive.js';
-import { resolveShowArtist as _resolveShowArtistShared } from '../shared/helpers.js';
+import {
+  resolveShowArtist as _resolveShowArtistShared,
+  dedupeRelistenSongs,
+  trackContainsSong,
+  normaliseSongTitle,
+  aggregateRelistenShowsToSongs,
+} from '../shared/helpers.js';
+
+// Per-artist cache of song catalogs we built from setlist scans (used as
+// a fallback when Relisten's /songs endpoint returns empty). Avoids
+// re-scanning every Songs-tab visit. Cleared on app reload.
+const _relistenSongsScanCache = new Map();
 
 
 /* ── Show → artist resolution ──────────────────────────────────────────────
@@ -887,6 +898,10 @@ export function viewTourShows(artist, tour) {
 /* ── All-shows cache + Venues + Songs ───────────── */
 const allShowsCache  = {};
 const songShowsCache = {};
+// Per-session set of song titles the user has heard live (in attended shows)
+// for a given artist. Keyed by artist.slug; values are Set<lowercased name>.
+// Populated lazily by viewSongs to drive the 🎧 indicator on song rows.
+const attendedSongsBySession = new Map();
 let   scanCancelled  = false;
 
 export async function getAllShows(artist) {
@@ -963,9 +978,84 @@ export async function viewSongs(artist) {
     { label: 'Songs' },
   ]);
   try {
-    const songs     = await api.songs(artist.slug);
-    const byPopular = [...songs].sort((a, b) => (b.shows_played_at ?? 0) - (a.shows_played_at ?? 0));
-    const byRare    = [...songs].sort((a, b) => (a.shows_played_at ?? 0) - (b.shows_played_at ?? 0));
+    // Relisten's canonical Song table sometimes ingests "Bertha", "Bertha >",
+    // and "Bertha ->" as three separate rows (taper data inconsistency).
+    // dedupeRelistenSongs collapses them by normalised title, sums plays,
+    // and picks the cleanest display name. See test/helpers.test.js.
+    const rawSongs  = await api.songs(artist.slug);
+    const songs     = dedupeRelistenSongs(rawSongs);
+
+    // Fallback: Relisten's canonical /songs endpoint is empty for some
+    // artists (Dead & Company is the canonical example — show data exists
+    // but no Song table populated). When that happens, we build the song
+    // catalog ourselves by scanning every show's setlist. Cached per-artist
+    // for the session so this only runs once per artist visit.
+    let activeSongs = songs;
+    if (!activeSongs.length) {
+      const cached = _relistenSongsScanCache.get(artist.slug);
+      if (cached) {
+        activeSongs = cached;
+      } else {
+        // Render a progress bar while scanning. The same getAllShows() +
+        // per-show fetch infrastructure that powers viewSongShows.
+        safeInnerHTML($('contentInner'), `
+          <div class="section-header" style="align-items:center">
+            <div>
+              <div class="section-title">Songs — ${esc(artist.name)}</div>
+              <div class="section-subtitle" id="scanStatus">Building song catalog from setlists…</div>
+            </div>
+          </div>
+          <div class="scan-bar"><div class="scan-bar-fill" id="scanFill"></div></div>
+          <div style="padding:16px;color:var(--text3);font-size:12px;text-align:center" id="scanHint">
+            Relisten doesn't have a canonical song list for this artist —
+            we're building one from per-show setlists. This runs once per
+            session and caches.
+          </div>`);
+
+        const allShows = await getAllShows(artist);
+        const total    = allShows.length;
+        let scanned    = 0;
+        const fullShows = [];
+        const batchSize = 20;
+        for (let i = 0; i < allShows.length; i += batchSize) {
+          await Promise.all(allShows.slice(i, i + batchSize).map(async show => {
+            try {
+              const full = await api.show(artist.slug, show.display_date);
+              fullShows.push(full);
+            } catch { /* skip shows we can't fetch */ }
+            scanned++;
+          }));
+          if ($('scanStatus')) $('scanStatus').textContent =
+            `Scanning ${scanned} / ${total} setlists`;
+          if ($('scanFill'))   $('scanFill').style.width =
+            `${Math.round((scanned / total) * 100)}%`;
+        }
+
+        activeSongs = aggregateRelistenShowsToSongs(fullShows);
+        _relistenSongsScanCache.set(artist.slug, activeSongs);
+      }
+
+      if (!activeSongs.length) {
+        // Truly nothing — even the setlists were empty. Fall back to the
+        // friendly empty state so the user isn't staring at a blank page.
+        safeInnerHTML($('contentInner'), `
+          <div class="section-header">
+            <div><div class="section-title">Songs — ${esc(artist.name)}</div></div>
+          </div>
+          <div class="empty-state" style="padding:32px;text-align:center;color:var(--text2)">
+            <div style="font-size:32px;margin-bottom:12px">🎵</div>
+            <div style="font-size:14px;font-weight:700;margin-bottom:6px">No setlist data available</div>
+            <div style="font-size:12px;color:var(--text3);max-width:420px;margin:0 auto;line-height:1.5">
+              Couldn't find any track data for ${esc(artist.name)} on Relisten.
+              Try the Years grid to browse shows directly.
+            </div>
+          </div>`);
+        return;
+      }
+    }
+
+    const byPopular = [...activeSongs].sort((a, b) => (b.shows_played_at ?? 0) - (a.shows_played_at ?? 0));
+    const byRare    = [...activeSongs].sort((a, b) => (a.shows_played_at ?? 0) - (b.shows_played_at ?? 0));
     let   activeSort = 'popular';
 
     function rarityLabel(n) {
@@ -979,7 +1069,7 @@ export async function viewSongs(artist) {
       <div class="section-header">
         <div>
           <div class="section-title">Songs — ${esc(artist.name)}</div>
-          <div class="section-subtitle">${songs.length} unique songs</div>
+          <div class="section-subtitle">${activeSongs.length} unique songs${songs.length === 0 ? ' · built from setlists' : ''}</div>
         </div>
         <div class="song-sort-tabs">
           <button class="song-sort-tab active" data-sort="popular">Most Played</button>
@@ -989,14 +1079,64 @@ export async function viewSongs(artist) {
       <input class="song-filter" id="songFilter" type="text" placeholder="Filter songs…" autocomplete="off" spellcheck="false">
       <div class="song-list" id="songListEl"></div>`);
 
+    // Build a Set<lowercased song title> the user has heard at attended shows.
+    // Lazy: triggered on first Songs-tab visit per session per artist. Walks
+    // each attended show's full setlist (cached by getAllShows + api.show).
+    // The result is cached in attendedSongsBySession so subsequent renders
+    // are instant. While the set is loading we render without indicators
+    // and refresh once it resolves.
+    let attendedSongs = attendedSongsBySession.get(artist.slug) ?? null;
+    const attendedShowDates = store.getAttended()
+      .filter(a => a.artistSlug === artist.slug)
+      .map(a => a.date);
+
     function renderSongRows(list) {
-      safeInnerHTML($('songListEl'), list.map(s => `
-        <div class="song-row" data-name="${esc(s.name)}">
-          <div class="song-name">${esc(s.name)}${activeSort === 'rare' ? rarityLabel(s.shows_played_at ?? 0) : ''}</div>
+      safeInnerHTML($('songListEl'), list.map(s => {
+        // Use the normalised key so the heard-live set (which stores
+        // segment-split normalised keys) lines up with whatever cleaned
+        // display name the dedup picked.
+        const heard = attendedSongs?.has(normaliseSongTitle(s.name)) ?? false;
+        return `
+        <div class="song-row" data-name="${esc(s.name)}" data-plays="${s.shows_played_at ?? 0}">
+          <div class="song-name">${heard ? '<span class="song-heard" title="Heard live">🎧</span> ' : ''}${esc(s.name)}${activeSort === 'rare' ? rarityLabel(s.shows_played_at ?? 0) : ''}</div>
           <div class="song-count">${s.shows_played_at ?? '?'} shows</div>
-        </div>`).join(''));
+        </div>`;
+      }).join(''));
       $('songListEl').querySelectorAll('.song-row').forEach(row =>
-        row.addEventListener('click', () => viewSongShows(artist, row.dataset.name)));
+        row.addEventListener('click', () => viewSongShows(artist, row.dataset.name, +row.dataset.plays || null)));
+    }
+
+    // If we haven't computed the attended-songs set for this artist yet,
+    // do it in the background. Each attended show is one cached api.show()
+    // call; we build a Set of normalised song keys seen across them.
+    // Composite tracks like "Bertha > Eyes of the World" split on
+    // transition markers so both songs register as heard.
+    if (!attendedSongs && attendedShowDates.length) {
+      (async () => {
+        try {
+          const acc = new Set();
+          for (const date of attendedShowDates) {
+            try {
+              const full   = await api.show(artist.slug, date);
+              // Walk every listed track regardless of mp3_url — the user
+              // was physically present, recording availability is irrelevant.
+              const tracks = (full.sources ?? []).flatMap(src =>
+                (src.sets ?? []).flatMap(s => s.tracks ?? []));
+              for (const t of tracks) {
+                if (!t.title) continue;
+                for (const seg of String(t.title).split(/\s*(?:->|>|~)\s*/)) {
+                  const k = normaliseSongTitle(seg);
+                  if (k) acc.add(k);
+                }
+              }
+            } catch { /* skip shows we can't fetch */ }
+          }
+          attendedSongsBySession.set(artist.slug, acc);
+          attendedSongs = acc;
+          // Re-render with indicators now that we have the set.
+          renderSongRows(currentList($('songFilter')?.value.toLowerCase().trim() ?? ''));
+        } catch { /* leave indicators unset */ }
+      })();
     }
 
     function currentList(q) {
@@ -1019,8 +1159,8 @@ export async function viewSongs(artist) {
   } catch(e) { console.error('[views-core] viewSongs', e); showError(e.message); }
 }
 
-export async function viewSongShows(artist, songName) {
-  nav.record(viewSongShows, [artist, songName]);
+export async function viewSongShows(artist, songName, totalPlays = null) {
+  nav.record(viewSongShows, [artist, songName, totalPlays]);
   const cacheKey = `${artist.slug}::${songName.toLowerCase()}`;
   setBreadcrumb([
     { label: artist.name, onClick: () => viewYears(artist) },
@@ -1060,7 +1200,22 @@ export async function viewSongShows(artist, songName) {
     const total = allShows.length;
     let scanned = 0;
     const found = [];
-    const lower = songName.toLowerCase();
+    // Use the normalised key as the match target. trackContainsSong splits
+    // tracks on transition markers (>, ->, ~) and exact-matches each
+    // segment after normalisation — so "Bertha", "Bertha >", and
+    // "Bertha > Eyes of the World" all count as Bertha plays without
+    // false-matching unrelated substrings like "Bertha Tease".
+    const targetKey = normaliseSongTitle(songName);
+
+    // Sorted chronological view of allShows + attended set are needed for
+    // the stats card (longest run, longest gap, "first time since").
+    const allShowsByDate = [...allShows].sort((a, b) =>
+      (a.display_date ?? '') < (b.display_date ?? '') ? -1 : 1);
+    const attendedSet = new Set(
+      store.getAttended()
+        .filter(a => a.artistSlug === artist.slug)
+        .map(a => a.date)
+    );
 
     const updateStatus = () => {
       if ($('scanStatus')) $('scanStatus').textContent =
@@ -1075,8 +1230,16 @@ export async function viewSongShows(artist, songName) {
         if (scanCancelled) return;
         try {
           const full   = await api.show(artist.slug, show.display_date);
-          const tracks = (full.sources ?? []).flatMap(src => flatTracks(src));
-          const match  = tracks.some(t => t.title?.toLowerCase().includes(lower));
+          // Walk EVERY listed track across all sources, regardless of whether
+          // it has a streamable mp3_url. Tapers sometimes upload setlists
+          // without the audio (or with broken links); we still want those
+          // shows to register as "Bertha was played here". flatTracks()
+          // intentionally filters by mp3_url for playback contexts; here we
+          // need the unfiltered tracklist.
+          const tracks = (full.sources ?? []).flatMap(src =>
+            (src.sets ?? []).flatMap(s => s.tracks ?? [])
+          );
+          const match  = tracks.some(t => trackContainsSong(t.title, targetKey));
           if (match) {
             found.push(show);
             const el = document.createElement('div');
@@ -1122,7 +1285,134 @@ export async function viewSongShows(artist, songName) {
     }
     if (!scanCancelled) songShowsCache[cacheKey] = found;
 
+    // Render the stats card once we have data — debut, last played, longest
+    // gap, longest run of consecutive shows containing the song, top venues,
+    // and the user's attendance count for shows containing this song.
+    if (found.length && !scanCancelled) {
+      renderSongStatsCard(artist, songName, found, allShowsByDate, attendedSet, totalPlays);
+    }
+
   } catch(e) { console.error('[views-core] viewSongShows', e); showError(e.message); }
+}
+
+/* ── Song stats card renderer ──────────────────────────────────────────────
+ * Computes derived stats from the scan output and renders a card above the
+ * show list.
+ *  - found:           shows we found a recording for that contains the song
+ *  - allShowsByDate:  every show by this artist in chronological order
+ *  - attendedSet:     Set of show dates the user has marked attended
+ *  - totalPlays:      Relisten's authoritative play count from /songs (may
+ *                     exceed `found.length` because Relisten tracks setlist
+ *                     data for shows whose recordings we don't have access
+ *                     to; null when caller didn't pass it through).
+ * ──────────────────────────────────────────────────────────────────────── */
+function renderSongStatsCard(artist, songName, found, allShowsByDate, attendedSet, totalPlays) {
+  const cardHost = document.getElementById('songShowsEl');
+  if (!cardHost) return;
+
+  // Sort found chronologically once.
+  const foundByDate = [...found].sort((a, b) =>
+    (a.display_date ?? '') < (b.display_date ?? '') ? -1 : 1);
+  const debut = foundByDate[0]?.display_date ?? '';
+  const last  = foundByDate[foundByDate.length - 1]?.display_date ?? '';
+
+  // Longest gap (days between consecutive plays).
+  let longestGap = 0;
+  let longestGapRange = '';
+  for (let i = 1; i < foundByDate.length; i++) {
+    const a = new Date(foundByDate[i - 1].display_date);
+    const b = new Date(foundByDate[i].display_date);
+    const days = Math.round((b - a) / 86400000);
+    if (days > longestGap) {
+      longestGap      = days;
+      longestGapRange = `${foundByDate[i - 1].display_date} → ${foundByDate[i].display_date}`;
+    }
+  }
+  const gapYears = longestGap > 365 ? `${(longestGap / 365).toFixed(1)} years` : `${longestGap} days`;
+
+  // Longest run of CONSECUTIVE shows in the artist's timeline that contained
+  // the song. Walks the chronological show list once.
+  const foundDateSet = new Set(foundByDate.map(s => s.display_date));
+  let longestRun = 0, currentRun = 0, runEndDate = '';
+  for (const s of allShowsByDate) {
+    if (foundDateSet.has(s.display_date)) {
+      currentRun++;
+      if (currentRun > longestRun) {
+        longestRun  = currentRun;
+        runEndDate  = s.display_date;
+      }
+    } else {
+      currentRun = 0;
+    }
+  }
+
+  // Top venues by count.
+  const venueCounts = new Map();
+  for (const s of foundByDate) {
+    const v = s.venue?.name ?? '';
+    if (!v) continue;
+    venueCounts.set(v, (venueCounts.get(v) ?? 0) + 1);
+  }
+  const topVenues = [...venueCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([name, n]) => `${esc(name)} (${n})`)
+    .join(' · ');
+
+  // Best shows by avg_rating, top 5.
+  const bestShows = [...foundByDate]
+    .filter(s => s.avg_rating)
+    .sort((a, b) => (b.avg_rating ?? 0) - (a.avg_rating ?? 0))
+    .slice(0, 5);
+
+  const attendedCount = foundByDate.filter(s => attendedSet.has(s.display_date)).length;
+
+  // Show Relisten's authoritative play count when we have it AND it differs
+  // meaningfully from what we found (some shows lack uploaded recordings —
+  // we can count the setlist match but they're not in the scan list).
+  const showTotal       = totalPlays != null && totalPlays > 0;
+  const totalIsLarger   = showTotal && totalPlays > found.length;
+  const primaryPlayNum  = showTotal ? totalPlays : found.length;
+  const primaryPlayLbl  = showTotal ? 'Total plays' : 'Recorded shows';
+
+  const stats = document.createElement('div');
+  stats.className = 'song-stats-card';
+  stats.innerHTML = `
+    <div class="song-stats-grid">
+      <div class="song-stat">
+        <div class="song-stat-num">${primaryPlayNum}</div>
+        <div class="song-stat-label">${esc(primaryPlayLbl)}</div>
+        ${totalIsLarger ? `<div class="song-stat-sub">${found.length} recorded</div>` : ''}
+      </div>
+      <div class="song-stat"><div class="song-stat-num">${esc(debut)}</div><div class="song-stat-label">Debut</div></div>
+      <div class="song-stat"><div class="song-stat-num">${esc(last)}</div><div class="song-stat-label">Last played</div></div>
+      ${attendedCount > 0
+        ? `<div class="song-stat song-stat-attended"><div class="song-stat-num">🎧 ${attendedCount}</div><div class="song-stat-label">You were there</div></div>`
+        : ''}
+    </div>
+    ${longestGap > 30 || longestRun > 1 ? `
+      <div class="song-stats-extras">
+        ${longestGap > 30 ? `<div><strong>Longest gap:</strong> ${gapYears} <span class="song-stats-sub">(${esc(longestGapRange)})</span></div>` : ''}
+        ${longestRun > 1   ? `<div><strong>Longest run:</strong> ${longestRun} shows in a row <span class="song-stats-sub">(through ${esc(runEndDate)})</span></div>` : ''}
+        ${topVenues       ? `<div><strong>Top venues:</strong> ${topVenues}</div>` : ''}
+      </div>` : ''}
+    ${bestShows.length ? `
+      <div class="song-stats-best">
+        <div class="song-stats-best-label">Best shows by rating</div>
+        <div class="song-stats-best-rows">
+          ${bestShows.map(s => `
+            <div class="song-stats-best-row" data-date="${esc(s.display_date)}">
+              <div class="song-stats-best-date">${esc(s.display_date)}${attendedSet.has(s.display_date) ? ' 🎧' : ''}</div>
+              <div class="song-stats-best-venue">${esc(s.venue?.name ?? '')}</div>
+              <div class="song-stats-best-rating">${stars(s.avg_rating)}</div>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}`;
+  // Insert above the show list.
+  cardHost.parentNode.insertBefore(stats, cardHost);
+
+  stats.querySelectorAll('.song-stats-best-row').forEach(row =>
+    row.addEventListener('click', () => viewShow(artist, row.dataset.date)));
 }
 
 /* ── Shows list views ────────────────────────────── */

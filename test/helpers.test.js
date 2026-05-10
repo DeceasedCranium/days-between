@@ -26,6 +26,12 @@ import {
   applyNugsFilters,
   resolveShowArtist,
   compareVersions,
+  normaliseSongTitle,
+  pickDisplayTitle,
+  aggregateNugsSongs,
+  dedupeRelistenSongs,
+  trackContainsSong,
+  aggregateRelistenShowsToSongs,
 } from '../app/shared/helpers.js';
 
 
@@ -353,4 +359,200 @@ test('compareVersions strips pre-release / build metadata', () => {
 test('compareVersions handles missing segments as zero', () => {
   assert.ok(compareVersions('1.10', '1.10.0') === 0);
   assert.ok(compareVersions('2',    '1.99.99') > 0);
+});
+
+
+/* ── normaliseSongTitle (Nugs Songs tab dedup) ──────────────────────────── */
+
+test('normaliseSongTitle handles plain titles', () => {
+  assert.equal(normaliseSongTitle('Deal'), 'deal');
+});
+
+test('normaliseSongTitle strips trailing arrow markers', () => {
+  assert.equal(normaliseSongTitle('Deal >'),    'deal');
+  assert.equal(normaliseSongTitle('Deal ->'),   'deal');
+  assert.equal(normaliseSongTitle('Deal ~'),    'deal');
+});
+
+test('normaliseSongTitle strips set / encore decorations', () => {
+  assert.equal(normaliseSongTitle('Deal (set 1)'),     'deal');
+  assert.equal(normaliseSongTitle('Deal (encore)'),    'deal');
+  assert.equal(normaliseSongTitle('Deal (reprise)'),   'deal');
+  assert.equal(normaliseSongTitle('Deal [Set 2]'),     'deal');
+});
+
+test('normaliseSongTitle strips leading track numbers', () => {
+  assert.equal(normaliseSongTitle('01 - Deal'),  'deal');
+  assert.equal(normaliseSongTitle('12. Deal'),   'deal');
+  assert.equal(normaliseSongTitle('t01 Deal'),   'deal');
+});
+
+test('normaliseSongTitle strips taper filename prefix', () => {
+  assert.equal(normaliseSongTitle('gd07191985-Deal'), 'deal');
+});
+
+test('normaliseSongTitle is case- and whitespace-insensitive', () => {
+  assert.equal(normaliseSongTitle('  DEAL  '), 'deal');
+});
+
+test('aggregateNugsSongs groups across containers and dedups within a show', () => {
+  const containers = [
+    { containerID: 1, songs: ['Deal', 'Eyes of the World', 'Eyes of the World'] }, // dup w/in show
+    { containerID: 2, songs: ['Deal >', '01 - Eyes of the World'] },
+    { containerID: 3, songs: ['Tennessee Jed'] },
+  ];
+  const out = aggregateNugsSongs(containers);
+  const byKey = Object.fromEntries(out.map(s => [s.key, s]));
+  assert.equal(byKey['deal'].plays, 2);
+  assert.equal(byKey['deal'].containerIDs.length, 2);
+  assert.equal(byKey['eyes of the world'].plays, 2);          // not 3 — dup in show 1 collapsed
+  assert.equal(byKey['eyes of the world'].containerIDs.length, 2);
+  assert.equal(byKey['tennessee jed'].plays, 1);
+});
+
+test('aggregateNugsSongs picks the most-frequent display title', () => {
+  const containers = [
+    { containerID: 1, songs: ['Deal'] },
+    { containerID: 2, songs: ['Deal'] },
+    { containerID: 3, songs: ['Deal >'] },
+  ];
+  const out = aggregateNugsSongs(containers);
+  const deal = out.find(s => s.key === 'deal');
+  assert.equal(deal.displayTitle, 'Deal'); // appears 2x vs "Deal >" 1x
+});
+
+
+/* ── dedupeRelistenSongs ─────────────────────────────────────────────────── */
+
+test('dedupeRelistenSongs merges decorated variants of the same canonical song', () => {
+  const songs = [
+    { name: 'Bertha',     shows_played_at: 412 },
+    { name: 'Bertha >',   shows_played_at: 17  },
+    { name: 'Bertha ->',  shows_played_at: 3   },
+    { name: 'Truckin\'',  shows_played_at: 380 },
+  ];
+  const out = dedupeRelistenSongs(songs);
+  assert.equal(out.length, 2); // Bertha + Truckin
+  const bertha = out.find(s => s.name === 'Bertha');
+  assert.equal(bertha.shows_played_at, 432);
+  assert.equal(bertha._variants.length, 3);
+});
+
+test('dedupeRelistenSongs picks the cleanest display name', () => {
+  // Decorated entries first; the clean one comes after.
+  const songs = [
+    { name: 'Bertha >',  shows_played_at: 1 },
+    { name: 'Bertha ->', shows_played_at: 1 },
+    { name: 'Bertha',    shows_played_at: 1 }, // arrives last but should win
+  ];
+  const out = dedupeRelistenSongs(songs);
+  assert.equal(out[0].name, 'Bertha');
+});
+
+test('dedupeRelistenSongs unwraps the {success, data} envelope', () => {
+  // Relisten /songs sometimes returns this shape (especially for 404s or
+  // artists with no song-catalog data) instead of a raw array.
+  const envelope = { success: false, error_code: 404, data: false };
+  const out = dedupeRelistenSongs(envelope);
+  assert.deepEqual(out, []);
+});
+
+test('dedupeRelistenSongs unwraps {data: [...]} envelope', () => {
+  const envelope = { success: true, data: [{ name: 'Bertha', shows_played_at: 5 }] };
+  const out = dedupeRelistenSongs(envelope);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].name, 'Bertha');
+});
+
+test('dedupeRelistenSongs ignores empty names gracefully', () => {
+  const songs = [
+    { name: '', shows_played_at: 0 },
+    { name: 'Bertha', shows_played_at: 100 },
+    { shows_played_at: 50 },
+  ];
+  const out = dedupeRelistenSongs(songs);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].shows_played_at, 100);
+});
+
+
+/* ── trackContainsSong (smarter song-detail matching) ────────────────────── */
+
+test('trackContainsSong matches plain titles', () => {
+  assert.ok(trackContainsSong('Bertha', 'bertha'));
+});
+
+test('trackContainsSong matches transition-decorated titles', () => {
+  assert.ok(trackContainsSong('Bertha >',  'bertha'));
+  assert.ok(trackContainsSong('Bertha ->', 'bertha'));
+  assert.ok(trackContainsSong('Bertha ~',  'bertha'));
+});
+
+test('trackContainsSong matches BOTH songs in a composite jam track', () => {
+  assert.ok(trackContainsSong('Bertha > Eyes of the World', 'bertha'));
+  assert.ok(trackContainsSong('Bertha > Eyes of the World', 'eyes of the world'));
+});
+
+test('trackContainsSong does NOT match "Bertha Tease" for "bertha"', () => {
+  // "Bertha Tease" is its own thing in jam-band parlance.
+  assert.equal(trackContainsSong('Bertha Tease', 'bertha'), false);
+});
+
+test('trackContainsSong does NOT false-match unrelated substrings', () => {
+  assert.equal(trackContainsSong('My Eyes Are Blue', 'eyes'), false);
+});
+
+test('trackContainsSong handles leading track-number / set markers', () => {
+  assert.ok(trackContainsSong('01 - Bertha (encore)', 'bertha'));
+});
+
+
+/* ── aggregateRelistenShowsToSongs (Songs-tab fallback) ────────────────── */
+
+test('aggregateRelistenShowsToSongs builds song list from show setlists', () => {
+  const shows = [
+    { sources: [{ sets: [{ tracks: [
+      { title: 'Bertha' }, { title: 'Truckin\'' }, { title: 'Sugar Magnolia' }
+    ]}]}]},
+    { sources: [{ sets: [{ tracks: [
+      { title: 'Bertha >' }, { title: 'Eyes of the World' }
+    ]}]}]},
+    { sources: [{ sets: [{ tracks: [
+      { title: 'Truckin\'' }, { title: 'Bertha (encore)' }
+    ]}]}]},
+  ];
+  const out = aggregateRelistenShowsToSongs(shows);
+  const map = Object.fromEntries(out.map(s => [s.name.toLowerCase(), s.shows_played_at]));
+  assert.equal(map['bertha'], 3);              // played in all three shows
+  assert.equal(map['truckin\''], 2);
+  assert.equal(map['eyes of the world'], 1);
+  assert.equal(map['sugar magnolia'], 1);
+});
+
+test('aggregateRelistenShowsToSongs splits composite tracks across both songs', () => {
+  const shows = [
+    { sources: [{ sets: [{ tracks: [
+      { title: 'Bertha > Eyes of the World' }
+    ]}]}]},
+  ];
+  const out = aggregateRelistenShowsToSongs(shows);
+  const names = out.map(s => s.name.toLowerCase()).sort();
+  assert.deepEqual(names, ['bertha', 'eyes of the world']);
+});
+
+test('aggregateRelistenShowsToSongs dedupes within a single show', () => {
+  const shows = [
+    { sources: [{ sets: [
+      { tracks: [{ title: 'Bertha' }] },
+      { tracks: [{ title: 'Bertha (encore)' }] },
+    ]}]},
+  ];
+  const out = aggregateRelistenShowsToSongs(shows);
+  const bertha = out.find(s => s.name.toLowerCase() === 'bertha');
+  assert.equal(bertha.shows_played_at, 1); // not 2 — same show
+});
+
+test('aggregateRelistenShowsToSongs returns [] for empty input', () => {
+  assert.deepEqual(aggregateRelistenShowsToSongs([]),         []);
+  assert.deepEqual(aggregateRelistenShowsToSongs(undefined),  []);
 });

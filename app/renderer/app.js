@@ -4,6 +4,7 @@ import { state, settings, nugsAuth, nav, sidebarSource, setSidebarSource,
          loadAll, getResume, setResume } from './state.js';
 import { api }                       from './api.js';
 import { setLfmKey, lfm }            from './lastfm.js';
+import { initSetlistFm }             from './setlistfm.js';
 import {
   audio, playing, setPlaying, cast, setRadioMode,
   setPlayerArt, setPlayerSub, setSaveResumeState,
@@ -25,6 +26,8 @@ import { initUpdateCheck } from './update-check.js';
 
 /* ── LFM key — injected from main process ────────── */
 window.ipc?.getLfmKey?.().then(k => { if (k) setLfmKey(k); }).catch(() => {});
+// setlist.fm key is loaded by setlistfm.js itself — no callback wiring.
+initSetlistFm();
 
 /* ── saveResumeState — injected into player ─────── */
 function saveResumeState() {

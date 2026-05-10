@@ -339,7 +339,8 @@ async function lfmPost(params) {
 }
 
 // Expose non-secret config to renderer
-ipcMain.handle('config:lfm-key', () => LFM_KEY);
+ipcMain.handle('config:lfm-key',       () => LFM_KEY);
+ipcMain.handle('config:setlistfm-key', () => _cfg.SETLIST_FM_KEY ?? '');
 
 ipcMain.handle('lastfm:get-token', async () => {
   const { net } = require('electron');
