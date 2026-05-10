@@ -33,6 +33,8 @@ import {
   trackContainsSong,
   aggregateRelistenShowsToSongs,
   aggregateSongCountsFromSetlists,
+  computeArtistAffinities,
+  formatAffinityReason,
 } from '../app/shared/helpers.js';
 
 
@@ -607,4 +609,117 @@ test('aggregateSongCountsFromSetlists handles malformed input gracefully', () =>
   assert.equal(aggregateSongCountsFromSetlists(undefined).size, 0);
   assert.equal(aggregateSongCountsFromSetlists([{}]).size, 0);
   assert.equal(aggregateSongCountsFromSetlists([{ sets: {} }]).size, 0);
+});
+
+/* ── computeArtistAffinities ─────────────────────────────────────────────── */
+
+test('computeArtistAffinities returns empty Map on empty input', () => {
+  assert.equal(computeArtistAffinities().size, 0);
+  assert.equal(computeArtistAffinities({}).size, 0);
+});
+
+test('computeArtistAffinities single-signal: attended only', () => {
+  const m = computeArtistAffinities({
+    attended: [
+      { artistSlug: 'phish',     artistName: 'Phish',     date: '2024-07-04' },
+      { artistSlug: 'phish',     artistName: 'Phish',     date: '2024-07-05' },
+      { artistSlug: 'dead-co',   artistName: 'Dead & Co', date: '2023-08-01' },
+    ],
+  });
+  assert.equal(m.get('phish').score, 6);    // 2 × 3
+  assert.equal(m.get('dead-co').score, 3);  // 1 × 3
+  assert.equal(m.get('phish').signals.attended, 2);
+});
+
+test('computeArtistAffinities single-signal: pinned only', () => {
+  const m = computeArtistAffinities({
+    artistFavs: ['phish', 'dead-co'],
+  });
+  assert.equal(m.get('phish').score, 5);    // pinned ×5
+  assert.equal(m.get('dead-co').score, 5);
+});
+
+test('computeArtistAffinities single-signal: plays only', () => {
+  const hist = Array.from({ length: 10 }, () => ({ artistSlug: 'phish', artistName: 'Phish' }));
+  const m    = computeArtistAffinities({ history: hist });
+  assert.equal(m.get('phish').score, 5);    // 10 × 0.5
+  assert.equal(m.get('phish').signals.plays, 10);
+});
+
+test('computeArtistAffinities blended weights: attended outweighs casual plays', () => {
+  // Phish: 1 attended (×3 = 3) + 4 plays (×0.5 = 2) → 5
+  // Dead:  20 plays (×0.5 = 10), no attended → 10
+  // So Dead wins on score even though Phish has the rarer attended signal.
+  const m = computeArtistAffinities({
+    attended: [{ artistSlug: 'phish', artistName: 'Phish', date: '2024-07-04' }],
+    history:  [
+      ...Array(4).fill({ artistSlug: 'phish',   artistName: 'Phish' }),
+      ...Array(20).fill({ artistSlug: 'dead-co', artistName: 'Dead & Co' }),
+    ],
+  });
+  assert.equal(m.get('phish').score,   5);
+  assert.equal(m.get('dead-co').score, 10);
+});
+
+test('computeArtistAffinities ignores entries without a slug', () => {
+  const m = computeArtistAffinities({
+    history:  [{ artistName: 'Unknown' }, { artistSlug: 'phish' }],
+    attended: [{ }, { artistSlug: 'phish' }],
+  });
+  assert.equal(m.size, 1);
+  assert.ok(m.has('phish'));
+});
+
+test('computeArtistAffinities recovers artist name from any signal', () => {
+  const m = computeArtistAffinities({
+    artistFavs: ['phish'],                                  // pinned has no name
+    history:    [{ artistSlug: 'phish', artistName: 'Phish' }],
+  });
+  // Even though pinned was added first (no name), history backfills the name.
+  assert.equal(m.get('phish').name, 'Phish');
+});
+
+/* ── formatAffinityReason ────────────────────────────────────────────────── */
+
+test('formatAffinityReason returns null when signals are empty / missing', () => {
+  assert.equal(formatAffinityReason(), null);
+  assert.equal(formatAffinityReason({ name: 'Phish', signals: { attended: 0, plays: 0, pinned: 0, favShows: 0 } }), null);
+});
+
+test('formatAffinityReason picks attended-singular form', () => {
+  assert.equal(
+    formatAffinityReason({ name: 'Phish', signals: { attended: 1, plays: 0, pinned: 0, favShows: 0 } }),
+    'You saw Phish live'
+  );
+});
+
+test('formatAffinityReason picks attended-plural form', () => {
+  assert.equal(
+    formatAffinityReason({ name: 'Dead & Co', signals: { attended: 3, plays: 0, pinned: 0, favShows: 0 } }),
+    'You attended Dead & Co 3×'
+  );
+});
+
+test('formatAffinityReason prefers attended over plays when both present', () => {
+  // attended×3=3 vs plays×0.5=2.5 → attended wins
+  const r = formatAffinityReason({
+    name: 'Phish',
+    signals: { attended: 1, plays: 5, pinned: 0, favShows: 0 },
+  });
+  assert.equal(r, 'You saw Phish live');
+});
+
+test('formatAffinityReason falls back to plays when no attended', () => {
+  assert.equal(
+    formatAffinityReason({ name: 'Phish', signals: { attended: 0, plays: 12, pinned: 0, favShows: 0 } }),
+    "You've played Phish 12×"
+  );
+});
+
+test('formatAffinityReason picks pinned when it dominates', () => {
+  // pinned×5=5 vs plays×0.5=4 → pinned wins
+  assert.equal(
+    formatAffinityReason({ name: 'Phish', signals: { attended: 0, plays: 8, pinned: 1, favShows: 0 } }),
+    'Pinned: Phish'
+  );
 });

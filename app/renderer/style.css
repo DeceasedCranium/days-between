@@ -145,9 +145,13 @@ body {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  /* Exact height: viewport minus titlebar and player bar — sidebar never
-     overlaps or clips behind either fixed chrome element.             */
-  height: calc(100vh - var(--title-h) - var(--player-h));
+  /* Stretch to fill .app-body, which is itself flex:1 between the titlebar
+     and the player bar. Previously used calc(100vh - title - player), but
+     that math drifted from the actual layout (DPR rounding / scrollbar
+     gutter), leaving a visible gap below the sidebar. Letting flexbox do
+     the math is both simpler and self-correcting if chrome heights change. */
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   position: relative;
   z-index: 10;
@@ -1110,6 +1114,35 @@ body {
 .sotd-artist { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 4px; transition: color 0.15s; }
 .sotd-meta   { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
 .sotd-rating { font-size: 12px; color: #f5a623; }
+
+/* ── SOTD: For You / Global toggle + reason chip ────────────────────────── */
+.welcome-sotd-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 10px;
+}
+.welcome-sotd-header .welcome-otd-title { margin-bottom: 0; }
+.sotd-toggle {
+  display: inline-flex; gap: 2px; padding: 2px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.sotd-pill {
+  font: inherit; font-size: 11px; font-weight: 600;
+  padding: 4px 10px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--text3);
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.sotd-pill:hover { color: var(--text); }
+.sotd-pill.active {
+  background: var(--accent); color: #fff;
+}
+.sotd-reason {
+  display: inline-block; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 2px 8px; border-radius: 999px; margin-bottom: 6px;
+}
 
 /* ── Tour list ──────────────────────────────────── */
 .tour-list { display: flex; flex-direction: column; gap: 6px; }

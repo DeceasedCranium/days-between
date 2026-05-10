@@ -23,6 +23,7 @@ import {
   isAvailable as setlistFmAvailable,
   getSongPlayCount,
 } from './setlistfm.js';
+import { pickPersonalizedSotd, hasEnoughSignal } from './personalization.js';
 
 // Per-artist cache of song catalogs we built from setlist scans (used as
 // a fallback when Relisten's /songs endpoint returns empty). Avoids
@@ -298,6 +299,119 @@ function renderWelcomeStats() {
   });
 }
 
+/* ── Show of the Day rendering ──────────────────────────────────────────────
+ * Lives on the welcome page. Driven by a "For You / Global" pill toggle —
+ * see the comment at the call site in viewWelcome for the user-facing
+ * contract. This function:
+ *   1. Waits for state.artists to land (resolveShowArtist depends on it).
+ *   2. Decides initial mode: persisted preference > "foryou" if signal
+ *      exists > "global" otherwise.
+ *   3. Renders the toggle if signal exists; binds click handlers that
+ *      re-render in place.
+ *   4. Defers per-mode work to renderSotdMode().
+ * ─────────────────────────────────────────────────────────────────────── */
+async function renderShowOfTheDay() {
+  // Wait for artists list — both modes need it for show-artist resolution.
+  for (let i = 0; i < 30 && !state.artists?.length; i++) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  const wrap   = $('welcomeSotd');
+  const toggle = $('sotdToggle');
+  if (!wrap || !toggle) return;
+
+  const haveSignal   = hasEnoughSignal();
+  const persistedMode = localStorage.getItem('sotd-mode');
+  // Default to "foryou" when we can; honour user's prior pick if valid.
+  const initialMode = !haveSignal ? 'global'
+                    : (persistedMode === 'global' || persistedMode === 'foryou')
+                      ? persistedMode
+                      : 'foryou';
+
+  if (haveSignal) {
+    toggle.style.display = '';
+    toggle.querySelectorAll('.sotd-pill').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === initialMode);
+      b.addEventListener('click', () => {
+        const mode = b.dataset.mode;
+        if (!mode) return;
+        toggle.querySelectorAll('.sotd-pill').forEach(p =>
+          p.classList.toggle('active', p === b));
+        localStorage.setItem('sotd-mode', mode);
+        renderSotdMode(mode);
+      });
+    });
+  }
+
+  renderSotdMode(initialMode);
+}
+
+async function renderSotdMode(mode) {
+  const target = $('sotdContent');
+  if (!target) return;
+  target.innerHTML = `<div class="loading" style="height:50px;font-size:12px"><div class="spinner"></div></div>`;
+
+  try {
+    const today    = new Date().toISOString().slice(0, 10);
+    const cacheKey = `sotd-${mode}-${today}`;
+    let pick = null;
+
+    // Cache hit?
+    try {
+      const c = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+      if (c?.show && c?.artist) pick = c;
+    } catch { /* ignore corrupt cache */ }
+
+    if (!pick) {
+      // Both modes start by fetching trending — same pool either way.
+      const data    = await api.trending();
+      const shows   = (data.shows ?? data ?? []).filter(s => resolveShowArtist(s));
+
+      if (mode === 'foryou') {
+        const personalized = await pickPersonalizedSotd(today, shows);
+        if (personalized?.show && personalized?.artist) {
+          pick = {
+            show:   personalized.show,
+            artist: personalized.artist,
+            reason: personalized.reason ?? null,
+          };
+        }
+      }
+
+      // Fallback path — no personalized pick, OR mode is "global".
+      if (!pick) {
+        if (!shows.length) { $('welcomeSotd').style.display = 'none'; return; }
+        const seed = today.replace(/-/g, '');
+        const show = shows[parseInt(seed.slice(-4)) % shows.length];
+        const art  = resolveShowArtist(show);
+        if (!art?.slug) { $('welcomeSotd').style.display = 'none'; return; }
+        pick = { show, artist: art, reason: mode === 'foryou' ? null : '🔥 Trending today' };
+      }
+
+      try { localStorage.setItem(cacheKey, JSON.stringify(pick)); } catch { /* quota */ }
+    }
+
+    const { show, artist, reason } = pick;
+    safeInnerHTML(target, `
+      <div class="sotd-card" data-slug="${esc(artist.slug)}" data-date="${esc(show.display_date)}">
+        ${reason ? `<div class="sotd-reason">${esc(reason)}</div>` : ''}
+        <div class="sotd-artist">${esc(artist.name)}</div>
+        <div class="sotd-meta">${esc(show.display_date)}${show.venue?.name ? ' · ' + esc(show.venue.name) : ''}${show.venue?.location ? ', ' + esc(show.venue.location) : ''}</div>
+        ${show.avg_rating ? `<div class="sotd-rating">${'★'.repeat(Math.round(show.avg_rating))} ${show.avg_rating.toFixed(1)}</div>` : ''}
+        <button class="action-btn primary sotd-play" style="margin-top:8px">▶ Play Show</button>
+      </div>`);
+    target.querySelector('.sotd-card').addEventListener('click', () => viewShow(artist, show.display_date));
+    target.querySelector('.sotd-play').addEventListener('click', e => {
+      e.stopPropagation();
+      showLoading();
+      try { viewShow(artist, show.display_date); } catch { /* non-critical */ }
+    });
+  } catch (err) {
+    console.warn('[sotd] render failed:', err.message);
+    $('welcomeSotd').style.display = 'none';
+  }
+}
+
 export async function viewWelcome() {
   // Don't write to contentInner when it's hidden (nugs/mixlr source is active)
   if (sidebarSource !== 'relisten') return;
@@ -319,7 +433,13 @@ export async function viewWelcome() {
         <button class="action-btn" id="btnWelcomeRecent">🆕 Recently Added</button>
       </div>
       <div class="welcome-sotd" id="welcomeSotd">
-        <div class="welcome-otd-title">🎵 Show of the Day</div>
+        <div class="welcome-sotd-header">
+          <div class="welcome-otd-title">🎵 Show of the Day</div>
+          <div class="sotd-toggle" id="sotdToggle" style="display:none">
+            <button class="sotd-pill" data-mode="foryou">For You</button>
+            <button class="sotd-pill" data-mode="global">Global</button>
+          </div>
+        </div>
         <div id="sotdContent"><div class="loading" style="height:50px;font-size:12px"><div class="spinner"></div></div></div>
       </div>
       <div class="welcome-otd">
@@ -351,45 +471,20 @@ export async function viewWelcome() {
     } catch(e) { showError(e.message); }
   });
 
-  // Show of the Day — deterministic daily pick from trending
-  (async () => {
-    try {
-      // Trending v3 only ships `artist_uuid` (no nested artist, no slug), so
-      // resolveShowArtist needs state.artists populated. viewWelcome runs
-      // before the artists fetch finishes — wait up to 3s for it to land.
-      for (let i = 0; i < 30 && !state.artists?.length; i++) {
-        await new Promise(r => setTimeout(r, 100));
-      }
-      const today  = new Date().toISOString().slice(0, 10);
-      const cached = JSON.parse(localStorage.getItem('sotd') || 'null');
-      let sotd = (cached?.date === today) ? cached.show : null;
-      if (!sotd) {
-        const data  = await api.trending();
-        const shows = (data.shows ?? data ?? []).filter(s => resolveShowArtist(s));
-        if (shows.length) {
-          const seed = today.replace(/-/g, '');
-          sotd = shows[parseInt(seed.slice(-4)) % shows.length];
-          localStorage.setItem('sotd', JSON.stringify({ date: today, show: sotd }));
-        }
-      }
-      if (!sotd) { $('welcomeSotd').style.display = 'none'; return; }
-      const artist = resolveShowArtist(sotd);
-      if (!artist?.slug) { $('welcomeSotd').style.display = 'none'; return; }
-      safeInnerHTML($('sotdContent'), `
-        <div class="sotd-card" data-slug="${esc(artist.slug)}" data-date="${esc(sotd.display_date)}">
-          <div class="sotd-artist">${esc(artist.name)}</div>
-          <div class="sotd-meta">${esc(sotd.display_date)}${sotd.venue?.name ? ' · ' + esc(sotd.venue.name) : ''}${sotd.venue?.location ? ', ' + esc(sotd.venue.location) : ''}</div>
-          ${sotd.avg_rating ? `<div class="sotd-rating">${'★'.repeat(Math.round(sotd.avg_rating))} ${sotd.avg_rating.toFixed(1)}</div>` : ''}
-          <button class="action-btn primary sotd-play" style="margin-top:8px">▶ Play Show</button>
-        </div>`);
-      $('sotdContent').querySelector('.sotd-card').addEventListener('click', () => viewShow(artist, sotd.display_date));
-      $('sotdContent').querySelector('.sotd-play').addEventListener('click', async e => {
-        e.stopPropagation();
-        showLoading();
-        try { viewShow(artist, sotd.display_date); } catch { /* non-critical */ }
-      });
-    } catch { $('welcomeSotd').style.display = 'none'; }
-  })();
+  // ── Show of the Day ─────────────────────────────────────────────────
+  // Two modes:
+  //   "foryou" → personalization.pickPersonalizedSotd against the
+  //              trending pool, falling back to api.random for the
+  //              top-affinity artist if none of trending matches.
+  //   "global" → original deterministic seeded pick from /trending.
+  // Toggle pills appear once we detect any local signal (attended /
+  // scrobbles / pinned / favShows). On a fresh install only "global"
+  // is shown and the toggle stays hidden.
+  //
+  // Both modes cache today's pick in localStorage under
+  // `sotd-${mode}-${date}` so re-toggling is instant. The user's last
+  // chosen mode is persisted in `sotd-mode`.
+  renderShowOfTheDay();
 
   try {
     // Same race as SOTD — wait for state.artists so resolveShowArtist can

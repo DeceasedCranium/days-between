@@ -436,6 +436,94 @@ export function trackContainsSong(trackTitle, targetKey) {
   return false;
 }
 
+/* ── Personalization: artist affinity blend ──────────────────────────────── */
+
+/** Combine three local signals into a per-artist affinity score so the
+ *  welcome page's "For You" Show-of-the-Day can pick from artists you
+ *  actually care about.
+ *
+ *  Inputs:
+ *    history     — rolling play log (store.getHistory()), max 100 entries
+ *    attended    — "I Was There" entries (store.getAttended())
+ *    artistFavs  — pinned artist slugs (store.getArtistFavs())
+ *    showFavs    — favorited shows (store.getFavs()) — soft per-artist signal
+ *
+ *  Weights (tuned so a single attended show outweighs a casual listen burst,
+ *  but heavy listening still surfaces undocumented favourites):
+ *    attended  × 3   — you literally went, strongest possible signal
+ *    pinned    × 5   — explicit "I care about this" toggle
+ *    plays     × 0.5 — sustained-interest signal, capped via 100-entry window
+ *    favShows  × 1   — soft per-show signal that aggregates by artist
+ *
+ *  Returns a Map<artistSlug, { score, name, signals }> where signals breaks
+ *  down the raw counts so callers can build a "why this pick" string. */
+export function computeArtistAffinities({
+  history    = [],
+  attended   = [],
+  artistFavs = [],
+  showFavs   = [],
+} = {}) {
+  const out = new Map();
+  const bump = (slug, name, key, n = 1) => {
+    if (!slug) return;
+    const cur = out.get(slug) ?? { score: 0, name: name || slug, signals: { attended: 0, plays: 0, pinned: 0, favShows: 0 } };
+    if (name && (!cur.name || cur.name === slug)) cur.name = name;
+    cur.signals[key] += n;
+    out.set(slug, cur);
+  };
+
+  for (const a of (attended ?? []))   bump(a?.artistSlug, a?.artistName, 'attended');
+  for (const h of (history  ?? []))   bump(h?.artistSlug, h?.artistName, 'plays');
+  for (const slug of (artistFavs ?? [])) bump(slug, null, 'pinned');
+  for (const f of (showFavs ?? []))   bump(f?.artistSlug, f?.artistName, 'favShows');
+
+  // Compute weighted score
+  for (const v of out.values()) {
+    v.score = v.signals.attended * 3
+            + v.signals.pinned   * 5
+            + v.signals.plays    * 0.5
+            + v.signals.favShows * 1;
+  }
+  return out;
+}
+
+/** Pick the dominant signal for a single artist's affinity entry and turn
+ *  it into a short, human-readable reason chip. Returns null when the
+ *  signal is too thin to confidently explain. */
+export function formatAffinityReason({ name, signals } = {}) {
+  if (!signals) return null;
+  const { attended = 0, plays = 0, pinned = 0, favShows = 0 } = signals;
+  // Rank the contributions (post-weight) and pick the dominant one.
+  const ranked = [
+    ['attended', attended * 3],
+    ['pinned',   pinned   * 5],
+    ['plays',    plays    * 0.5],
+    ['favShows', favShows * 1],
+  ].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (!ranked.length) return null;
+
+  const top = ranked[0][0];
+  const safeName = name || 'this artist';
+  switch (top) {
+    case 'attended':
+      return attended === 1
+        ? `You saw ${safeName} live`
+        : `You attended ${safeName} ${attended}×`;
+    case 'pinned':
+      return `Pinned: ${safeName}`;
+    case 'plays':
+      return plays >= 5
+        ? `You've played ${safeName} ${plays}×`
+        : `From your listening`;
+    case 'favShows':
+      return favShows === 1
+        ? `From your favorites`
+        : `${favShows} favorited shows`;
+    default:
+      return null;
+  }
+}
+
 /* ── Semver-ish comparison (update notifier) ──────────────────────────────── */
 
 /** Compare two semver-ish strings (e.g. "1.9.0" vs "1.10.0").
