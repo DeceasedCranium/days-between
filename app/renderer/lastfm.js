@@ -330,3 +330,15 @@ export const lfm = {
 };
 
 // lfm.load() is called by app.js after loadAll() completes
+
+/* When the main process detects a Last.fm session-invalid response (codes 4/9)
+ * it sends `lfm:session-invalid` back here. Wipe the stored session so we
+ * stop firing scrobble requests against a dead `sk`, and toast the user once
+ * with clear guidance. The same channel may fire many times before we react,
+ * so we no-op on already-cleared sessions. */
+window.ipc?.on('lfm:session-invalid', () => {
+  if (!lfm.session) return;
+  lfm.session = null;
+  lfm.save();
+  try { showToast('Last.fm session expired — reconnect in Settings'); } catch {}
+});

@@ -119,7 +119,8 @@ export const nugsApi = {
     if (!r.ok) throw new Error(`nugs catalog ${r.status}`);
     const text = await r.text();
     if (text.trimStart().startsWith('<')) throw new Error('nugs:unauthenticated');
-    return JSON.parse(text);
+    try { return JSON.parse(text); }
+    catch { throw new Error('nugs:bad-response'); }
   },
 
   /** Probe: globally-recent containers across the entire Nugs catalog.
@@ -167,7 +168,8 @@ export const nugsApi = {
     if (!r.ok) throw new Error(`nugs release ${r.status}`);
     const text = await r.text();
     if (text.trimStart().startsWith('<')) throw new Error('nugs:unauthenticated');
-    return JSON.parse(text);
+    try { return JSON.parse(text); }
+    catch { throw new Error('nugs:bad-response'); }
   },
 
   async streamUrl(trackId) {

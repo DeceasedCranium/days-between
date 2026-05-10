@@ -9,7 +9,15 @@ import { initEq, setBand, setGains, setBypass, resetBands, getGains, isBypassed,
 // Circular-safe imports (only used inside function bodies, never at init time)
 import { setBreadcrumb, viewShow, renderArtists } from './views-core.js';
 
-/* ── Export / Import data ────────────────────────── */
+/* ── Export / Import data ──────────────────────────
+ *
+ * Backup format v3 (current): includes EVERY local user-data store the app
+ * persists. Earlier exports (v2) silently dropped attended shows, bookmarks,
+ * ratings, and artist favs — restoring a v2 backup gave a half-empty
+ * library. v3 also writes through the proper store helpers (which target
+ * IndexedDB) instead of hitting localStorage directly, so a re-imported
+ * backup actually reappears after restart.
+ * ─────────────────────────────────────────────────────────────────── */
 export function exportData() {
   const notes = {};
   for (let i = 0; i < localStorage.length; i++) {
@@ -17,13 +25,18 @@ export function exportData() {
     if (k?.startsWith('db-note-')) notes[k] = localStorage.getItem(k);
   }
   const data = {
-    favorites:  store.getFavs(),
-    history:    store.getHistory(),
-    tapes:      tapes.getAll(),
-    settings:   settings.get(),
+    favorites:    store.getFavs(),
+    artistFavs:   store.getArtistFavs(),
+    history:      store.getHistory(),
+    attended:     store.getAttended(),
+    bookmarks:    store.getBookmarks(),
+    ratings:      store.getRatings(),
+    nugsArtists:  nugsArtistStore.get(),
+    tapes:        tapes.getAll(),
+    settings:     settings.get(),
     notes,
-    exportedAt: new Date().toISOString(),
-    version:    2,
+    exportedAt:   new Date().toISOString(),
+    version:      3,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -37,16 +50,40 @@ export function exportData() {
 export function importData(file) {
   const reader = new FileReader();
   reader.onload = e => {
+    let data;
+    try { data = JSON.parse(e.target.result); }
+    catch { showToast('Import failed — file is not valid JSON'); return; }
+    if (!data || typeof data !== 'object') {
+      showToast('Import failed — unrecognised backup format');
+      return;
+    }
     try {
-      const data = JSON.parse(e.target.result);
-      if (data.favorites) store.saveFavs(data.favorites);
-      if (data.history)   localStorage.setItem('db-history', JSON.stringify(data.history));
-      if (data.tapes)     localStorage.setItem('db-tapes',   JSON.stringify(data.tapes));
-      if (data.settings)  settings.set(data.settings);
-      if (data.notes)     Object.entries(data.notes).forEach(([k, v]) => localStorage.setItem(k, v));
-      showToast('Data imported successfully!');
+      // Each field is independently shape-checked so a partial / older
+      // backup imports cleanly without overwriting good data with `null`.
+      if (Array.isArray(data.favorites))   store.saveFavs(data.favorites);
+      if (Array.isArray(data.artistFavs))  store.saveArtistFavs(data.artistFavs);
+      if (Array.isArray(data.history))     store.setHistory(data.history);
+      if (Array.isArray(data.attended))    store.setAttended(data.attended);
+      if (Array.isArray(data.bookmarks))   store.setBookmarks(data.bookmarks);
+      if (data.ratings && typeof data.ratings === 'object' && !Array.isArray(data.ratings)) {
+        store.setRatings(data.ratings);
+      }
+      if (Array.isArray(data.nugsArtists)) nugsArtistStore.save(data.nugsArtists);
+      if (Array.isArray(data.tapes))       tapes.save(data.tapes);
+      if (data.settings && typeof data.settings === 'object') settings.set(data.settings);
+      if (data.notes && typeof data.notes === 'object') {
+        Object.entries(data.notes).forEach(([k, v]) => {
+          if (typeof k === 'string' && k.startsWith('db-note-') && typeof v === 'string') {
+            localStorage.setItem(k, v);
+          }
+        });
+      }
+      showToast('Data imported successfully! Restart the app to see all changes.');
       viewSettings();
-    } catch { showToast('Import failed — invalid file'); }
+    } catch (err) {
+      console.error('[import]', err);
+      showToast('Import partially failed — check console for details');
+    }
   };
   reader.readAsText(file);
 }
@@ -934,6 +971,14 @@ export function viewSettings() {
   }
   if ($('btnLfmConnect')) {
     $('btnLfmConnect').addEventListener('click', async () => {
+      // Pre-flight check: with no LFM_KEY (config.js missing or empty)
+      // last.fm's auth page returns a generic error and the user has no
+      // way to recover. Surface that clearly here instead of opening a
+      // half-broken auth URL.
+      if (!getLfmKey()) {
+        showToast('Last.fm requires an API key — see the GitHub README for setup');
+        return;
+      }
       const pending = localStorage.getItem('lfm_pending_token');
       if (pending) {
         const session = await window.ipc?.lfmGetSession(pending);
@@ -1028,7 +1073,14 @@ export function viewSettings() {
     importData(file); e.target.value = '';
   });
   $('btnClearHistory').addEventListener('click', () => {
-    if (confirm('Clear all play history?')) { localStorage.removeItem('db-history'); showToast('History cleared'); }
+    // History lives in IndexedDB (via state.js _set), not localStorage.
+    // Earlier versions wrote to the wrong layer here, so the toast lied —
+    // store.clearHistory() routes through the correct path.
+    if (confirm('Clear all play history?')) {
+      store.clearHistory();
+      showToast('History cleared');
+      viewSettings();
+    }
   });
 
   // ── Settings close button ─────────────────────────

@@ -232,6 +232,20 @@ export const store = {
     all.splice(idx, 1);
     _set('db-attended', all);
   },
+
+  /* ── Bulk setters (used by import / clear flows) ───────────────────
+   * Up through v1.14, viewSettings's "Clear history" button and
+   * the importData function wrote directly to localStorage even though
+   * loadAll() reads from IndexedDB. The result was silent failure: the
+   * confirmation dialog said "history cleared" but the data persisted,
+   * and a re-imported backup never re-appeared after restart. These
+   * helpers route through the same _set/_remove the rest of the store
+   * uses so the in-memory cache and IndexedDB stay in sync. */
+  setHistory(arr)   { _set('db-history',    Array.isArray(arr) ? arr : []); },
+  setAttended(arr)  { _set('db-attended',   Array.isArray(arr) ? arr : []); },
+  setBookmarks(arr) { _set('db-bookmarks',  Array.isArray(arr) ? arr : []); },
+  setRatings(obj)   { _set('db-ratings',    obj && typeof obj === 'object' ? obj : {}); },
+  clearHistory()    { _set('db-history',    []); },
 };
 
 /* ── Settings store ──────────────────────────────── */

@@ -338,6 +338,16 @@ async function lfmPost(params) {
   return res.json();
 }
 
+/* Last.fm error codes worth special handling:
+ *   4 — Authentication failed
+ *   9 — Invalid session key (user revoked access from last.fm web UI)
+ *  14 — Token has not been authorized (transient; don't clear)
+ * Returning `true` means the session is provably bad — caller should
+ * notify the renderer so it can wipe the stored sk and prompt a reconnect. */
+function lfmIsSessionInvalid(data) {
+  return data && (data.error === 4 || data.error === 9);
+}
+
 // Expose non-secret config to renderer
 ipcMain.handle('config:lfm-key',       () => LFM_KEY);
 ipcMain.handle('config:setlistfm-key', () => _cfg.SETLIST_FM_KEY ?? '');
@@ -359,12 +369,25 @@ ipcMain.handle('lastfm:get-session', async (_, token) => {
   } catch { return null; }
 });
 
+/* Both now-playing and scrobble previously swallowed every Last.fm error
+ * silently. If the user revoked the app's access from last.fm.com, every
+ * subsequent track attempted to scrobble with a dead `sk` and got rejected,
+ * with no signal back to the user — they'd notice their last.fm profile
+ * stopped updating sometime later. We now check for the specific
+ * "session invalid" error codes and notify the renderer so it can clear
+ * the stored session and prompt a reconnect. Network / 5xx errors are
+ * still swallowed (transient and should self-heal). */
 ipcMain.handle('lastfm:now-playing', async (_, { track, artist, album, duration, sk }) => {
   if (!sk) return;
   const p = { method: 'track.updateNowPlaying', api_key: LFM_KEY, track, artist, sk };
   if (album)    p.album    = album;
   if (duration) p.duration = String(Math.round(duration));
-  try { await lfmPost(p); } catch {}
+  try {
+    const data = await lfmPost(p);
+    if (lfmIsSessionInvalid(data)) {
+      try { win?.webContents.send('lfm:session-invalid', { code: data.error, message: data.message }); } catch {}
+    }
+  } catch {}
 });
 
 ipcMain.handle('lastfm:scrobble', async (_, { track, artist, album, timestamp, duration, sk }) => {
@@ -372,7 +395,12 @@ ipcMain.handle('lastfm:scrobble', async (_, { track, artist, album, timestamp, d
   const p = { method: 'track.scrobble', api_key: LFM_KEY, track, artist, timestamp: String(timestamp), sk };
   if (album)    p.album    = album;
   if (duration) p.duration = String(Math.round(duration));
-  try { await lfmPost(p); } catch {}
+  try {
+    const data = await lfmPost(p);
+    if (lfmIsSessionInvalid(data)) {
+      try { win?.webContents.send('lfm:session-invalid', { code: data.error, message: data.message }); } catch {}
+    }
+  } catch {}
 });
 
 // ── Cast IPC ──────────────────────────────────────────────────────────────

@@ -171,19 +171,6 @@ async function init() {
     viewWelcome();
   });
 
-  // ── Diagnostic click logger — identifies what element captures clicks ──────
-  // Useful when debugging overlapping layers (Nugs/Mixlr webview, etc.)
-  // Remove when the click-through issue is fully resolved.
-  document.addEventListener('click', e => {
-    const t = e.target;
-    console.log('[CLICK]', {
-      tag:   t.tagName,
-      id:    t.id       || '(none)',
-      cls:   (t.className && typeof t.className === 'string') ? t.className.slice(0, 60) : '(none)',
-      text:  t.textContent?.trim().slice(0, 40) || '(none)',
-    });
-  }, { capture: true });
-
   // Load all IndexedDB stores into memory before touching any UI
   await loadAll();
   lfm.load();
