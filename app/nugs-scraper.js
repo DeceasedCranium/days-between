@@ -35,6 +35,13 @@ const { BrowserWindow, ipcMain } = require('electron');
 let _ghostWin = null;
 let _scraping = false;
 
+// Verbose-trace gate — production users see a clean console; set
+// DAYS_BETWEEN_DEBUG=1 in the environment (or via the wrapper script) to
+// re-enable per-poll / per-click ghost tracing.
+const _DEBUG = process.env.DAYS_BETWEEN_DEBUG === '1';
+const dlog   = (...a) => { if (_DEBUG) console.log(...a); };
+const dinfo  = (...a) => { if (_DEBUG) console.info(...a); };
+
 // Timing jitter — randomises polling/scroll cadence to defeat volumetric bot
 // detection. Used both in the main process (between ghostEval polls) and
 // inlined into the in-page harvest loop (see ghostEval JS string below).
@@ -216,7 +223,7 @@ function startCdpCapture(ghost, signal) {
 function registerInjectHandler() {
   ipcMain.handle('inject-nugs-html', (_e, html) => {
     if (!html || typeof html !== 'string') return { ok: false, error: 'no HTML provided' };
-    console.info('[ghost] manual DOM injection — length:', html.length);
+    dinfo('[ghost] manual DOM injection — length:', html.length);
     return { ok: true, html };
   });
 }
@@ -263,7 +270,7 @@ function registerScrapeHandler() {
                         warmUrl === 'about:blank'    ||
                         /\/error|\/404/i.test(warmUrl);
         if (isCold) {
-          console.log('[ghost] session warm-start: ghost is cold — verifying login on play.nugs.net/home…');
+          dlog('[ghost] session warm-start: ghost is cold — verifying login on play.nugs.net/home…');
           await new Promise(r => {
             warmWin.webContents.once('did-navigate', () => {
               const PROOF = [
@@ -288,7 +295,7 @@ function registerScrapeHandler() {
                     })()
                   `);
                   if (ok) {
-                    console.log('[ghost] session warm-start: login verified ✓ — proceeding to', url);
+                    dlog('[ghost] session warm-start: login verified ✓ — proceeding to', url);
                     r();
                   } else if (Date.now() - startMs >= 6000) {
                     console.error('[ghost] AUTH FAILED: User token rejected — please sign in to play.nugs.net');
@@ -304,7 +311,7 @@ function registerScrapeHandler() {
           });
         }
         if (/\/watch|\/live\/|\/stream/i.test(url) && !/browse|library|home/i.test(url)) {
-          console.log('[ghost] Livestream handshake: Session Validated. Extracting HLS…');
+          dlog('[ghost] Livestream handshake: Session Validated. Extracting HLS…');
         }
       }
 
@@ -389,7 +396,7 @@ function registerScrapeHandler() {
             console.warn('[ghost] did-navigate → auth/challenge — hard timer will expire:', navUrl);
             isAuthenticating = true;
           } else if (/nugs\.net/.test(navUrl)) {
-            console.log('[ghost] did-navigate → nugs content — resuming scrape:', navUrl);
+            dlog('[ghost] did-navigate → nugs content — resuming scrape:', navUrl);
             isAuthenticating = false;
             armHardTimer(25_000);
             ghost.webContents.once('dom-ready', onDomReady);
@@ -418,7 +425,7 @@ function registerScrapeHandler() {
           }
 
           await ghostEval('window.scrollTo(0, document.body.scrollHeight);');
-          console.log('[ghost] initial scroll:', currentUrl);
+          dlog('[ghost] initial scroll:', currentUrl);
 
           await ghostEval(`
             (function() {
@@ -427,7 +434,7 @@ function registerScrapeHandler() {
                 var t = el.textContent.trim().toLowerCase();
                 return LABELS.some(function(l) { return t === l || t.startsWith(l); });
               });
-              if (btn) { btn.click(); console.log('[ghost] clicked:', btn.textContent.trim()); }
+              if (btn) { btn.click(); dlog('[ghost] clicked:', btn.textContent.trim()); }
             })()
           `);
 
@@ -473,12 +480,12 @@ function registerScrapeHandler() {
               })()
             `);
 
-            console.log('[ghost] poll', elapsed + 'ms —', (found ?? 0), '(need ' + MIN_FOUND + ')');
+            dlog('[ghost] poll', elapsed + 'ms —', (found ?? 0), '(need ' + MIN_FOUND + ')');
 
             if ((found ?? 0) >= MIN_FOUND) {
               if (isStash) {
                 armHardTimer(120_000);
-                console.log('[ghost] stash: starting scroll+harvest');
+                dlog('[ghost] stash: starting scroll+harvest');
 
                 const stashJson = await ghostEval(`
                   (function() {
@@ -541,7 +548,7 @@ function registerScrapeHandler() {
                           if (cooldown) { setTimeout(tick, rnd(200, 500)); return; }
                           var btn = findLoadMore();
                           if (btn) {
-                            console.log('[ghost-stash] clicking Load More — harvested so far:', all.size);
+                            dlog('[ghost-stash] clicking Load More — harvested so far:', all.size);
                             btn.click();
                             cooldown = true;
                             new Promise(function(res) {
@@ -559,7 +566,7 @@ function registerScrapeHandler() {
                             });
                           } else {
                             harvest();
-                            console.log('[ghost-stash] harvest complete:', all.size, 'items');
+                            dlog('[ghost-stash] harvest complete:', all.size, 'items');
                             resolve(JSON.stringify(Array.from(all.values())));
                           }
                           return;
@@ -579,7 +586,7 @@ function registerScrapeHandler() {
                 catch (e) { console.warn('[ghost] stash JSON parse failed:', e.message); }
 
                 if (stashItems?.length > 0) {
-                  console.log(`[ghost] stash harvest: ${stashItems.length} items`);
+                  dlog(`[ghost] stash harvest: ${stashItems.length} items`);
                   settle({ ok: true, html: '', stashItems });
                 } else {
                   console.warn('[ghost] stash scroll+harvest got 0 items — falling back to HTML');
@@ -652,7 +659,7 @@ function registerExtractStreamHandler() {
       const ghost       = ensureGhost();
       const nugsSession = ghost.webContents.session;
 
-      console.log('[ghost-stream] resetting ghost on /home…');
+      dlog('[ghost-stream] resetting ghost on /home…');
       await new Promise(r => {
         const guard = setTimeout(r, 6000);
         ghost.webContents.once('dom-ready', () => { clearTimeout(guard); r(); });
@@ -666,7 +673,7 @@ function registerExtractStreamHandler() {
         (details, callback) => {
           const u = details.url;
           if (u.includes('.m3u8') && !u.includes('hls.js') && _sniffResolve) {
-            console.log('[ghost-stream] sniffed m3u8:', u.slice(0, 120));
+            dlog('[ghost-stream] sniffed m3u8:', u.slice(0, 120));
             _sniffResolve(u);
             _sniffResolve = null;
           }
@@ -674,7 +681,7 @@ function registerExtractStreamHandler() {
         }
       );
 
-      console.log('[ghost-stream] navigating to', url);
+      dlog('[ghost-stream] navigating to', url);
       await new Promise(r => {
         const guard = setTimeout(r, 8000);
         ghost.webContents.once('dom-ready', () => { clearTimeout(guard); r(); });
@@ -691,7 +698,7 @@ function registerExtractStreamHandler() {
             'button[class*="play"], .play-btn, .btn-play, [class*="playerPlay"]'
           );
           if (playBtn) {
-            console.log("[ghost-stream] clicking play:", playBtn.className || playBtn.getAttribute("aria-label"));
+            dlog("[ghost-stream] clicking play:", playBtn.className || playBtn.getAttribute("aria-label"));
             playBtn.click();
             return "clicked:" + (playBtn.className || "play");
           }
@@ -724,7 +731,7 @@ function registerExtractStreamHandler() {
       `).catch(() => null);
 
       if (extracted?.includes('.m3u8')) {
-        console.log('[ghost-stream] JS-extracted:', extracted.slice(0, 100));
+        dlog('[ghost-stream] JS-extracted:', extracted.slice(0, 100));
         return { ok: true, m3u8: extracted };
       }
 

@@ -58,8 +58,69 @@ export const fadeIn = (el = $('contentInner')) => {
   el.classList.add('content-fadein');
 };
 
+/* Map a raw error message (often an HTTP status string or a thrown
+ * `nugs:*` sentinel) to a sentence the user can actually act on.
+ * The original message is preserved underneath in muted text so the
+ * developer-friendly form is still recoverable in screenshots. */
+function friendlyErrorMessage(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return { title: 'Something went wrong.', sub: '' };
+
+  // Nugs sentinel codes thrown from api.js
+  if (s.includes('nugs:unauthenticated')) {
+    return {
+      title: 'Sign in to nugs.net to continue.',
+      sub: 'Open Settings → Nugs.net to connect your account.',
+    };
+  }
+  if (s.includes('nugs:bad-response')) {
+    return {
+      title: 'Nugs returned an unexpected response.',
+      sub: 'This usually clears up on its own — try again in a moment.',
+    };
+  }
+  // Ghost scraper timeout
+  if (/^ghost timeout/i.test(s)) {
+    return {
+      title: "Couldn't reach nugs.net.",
+      sub: 'Check your connection or try again — nugs.net may be slow.',
+    };
+  }
+  // HTTP status codes from Relisten / Nugs / setlist.fm
+  const m = s.match(/\b(\d{3})\b/);
+  if (m) {
+    const code = parseInt(m[1], 10);
+    if (code === 429) {
+      return { title: 'Too many requests.', sub: 'Slow down — try again in a moment.' };
+    }
+    if (code >= 500) {
+      return { title: 'The server is having trouble.', sub: 'Not your fault — try again in a minute.' };
+    }
+    if (code === 404) {
+      return { title: 'Not found.', sub: 'This show or artist may have moved.' };
+    }
+    if (code === 401 || code === 403) {
+      return { title: 'Access denied.', sub: 'Check that you\'re signed in.' };
+    }
+  }
+  // Generic network-ish failures
+  if (/network|fetch|enotfound|econnrefused|failed to fetch/i.test(s)) {
+    return {
+      title: 'Network error.',
+      sub: 'Check your internet connection.',
+    };
+  }
+  return { title: 'Something went wrong.', sub: s };
+}
+
 export const showError = (msg) => {
-  $('contentInner').innerHTML = `<div class="error-state"><div class="icon">⚠️</div><p>${esc(msg)}</p></div>`;
+  const { title, sub } = friendlyErrorMessage(msg);
+  $('contentInner').innerHTML =
+    `<div class="error-state">
+       <div class="icon">⚠️</div>
+       <p class="error-title">${esc(title)}</p>
+       ${sub ? `<p class="error-sub">${esc(sub)}</p>` : ''}
+     </div>`;
 };
 
 /* ── Breadcrumb ──────────────────────────────────── */
@@ -422,6 +483,15 @@ export async function viewWelcome() {
   const now   = new Date();
   const label = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
 
+  // First-run banner — shown on fresh installs (no listening history yet)
+  // and dismissable forever via localStorage. The dismissed flag is set
+  // implicitly the first time the user plays a show (see player.js when
+  // store.pushHistory fires) so the banner stops appearing without the
+  // user having to explicitly close it.
+  const showFirstRunBanner =
+    !store.getHistory().length &&
+    localStorage.getItem('welcome-banner-dismissed') !== '1';
+
   safeInnerHTML($('contentInner'), `
     <div class="welcome">
       <img class="welcome-logo welcome-logo-img" src="../../assets/icon.svg" alt="Days Between">
@@ -432,6 +502,17 @@ export async function viewWelcome() {
         <button class="action-btn primary" id="btnWelcomeRandom">🎲 Random Show</button>
         <button class="action-btn" id="btnWelcomeRecent">🆕 Recently Added</button>
       </div>
+      ${showFirstRunBanner ? `
+      <div class="welcome-firstrun" id="welcomeFirstRun">
+        <button class="welcome-firstrun-close" id="welcomeFirstRunClose" title="Dismiss">×</button>
+        <div class="welcome-firstrun-title">👋 Welcome to Days Between</div>
+        <div class="welcome-firstrun-body">
+          Pick an artist from the sidebar, browse a show, and click ▶. As
+          you listen and mark <em>"I was there"</em> on shows you attended,
+          this welcome page will start picking shows tailored to you.
+          Settings (⚙ top-right) connects Last.fm and nugs.net.
+        </div>
+      </div>` : ''}
       <div class="welcome-sotd" id="welcomeSotd">
         <div class="welcome-sotd-header">
           <div class="welcome-otd-title">🎵 Show of the Day</div>
@@ -456,6 +537,12 @@ export async function viewWelcome() {
   // Hidden when history is empty (new install). Shows 4 stat tiles +
   // "Pick up where you left off" → resume the most recently played show.
   renderWelcomeStats();
+
+  // First-run banner dismiss
+  $('welcomeFirstRunClose')?.addEventListener('click', () => {
+    localStorage.setItem('welcome-banner-dismissed', '1');
+    $('welcomeFirstRun')?.remove();
+  });
 
   $('btnWelcomeRecent').addEventListener('click', () => viewRecent());
   $('btnWelcomeRandom').addEventListener('click', async () => {

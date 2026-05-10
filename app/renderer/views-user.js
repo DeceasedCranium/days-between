@@ -818,8 +818,30 @@ export function viewSettings() {
 
     <div class="settings-section">
       <div class="settings-section-title">About</div>
-      <div class="settings-row">
-        <div class="settings-row-label">Days Between<div class="settings-row-sub">Powered by Relisten.net — 70,000+ live concerts</div></div>
+      <div class="settings-row about-row">
+        <div class="settings-row-label">
+          Days Between
+          <div class="settings-row-sub">
+            Live music streaming desktop app — Relisten + Nugs.net + setlist.fm
+          </div>
+        </div>
+        <div class="about-version" id="aboutVersion">v…</div>
+      </div>
+      <div class="settings-row about-actions">
+        <button class="action-btn" id="btnAboutRepo">↗ GitHub repo</button>
+        <button class="action-btn" id="btnAboutReleases">↗ Release notes</button>
+        <button class="action-btn" id="btnAboutCheckUpdate">↻ Check for updates</button>
+      </div>
+      <div class="settings-row about-credits">
+        <div class="settings-row-sub" style="line-height:1.7">
+          <strong>Credits.</strong>
+          Catalog &amp; streaming via <a href="https://relisten.net" data-extlink>Relisten</a>;
+          subscription audio/video via <a href="https://nugs.net" data-extlink>Nugs.net</a>;
+          authoritative setlist data via <a href="https://www.setlist.fm" data-extlink>setlist.fm</a>;
+          artist images &amp; scrobbling via <a href="https://www.last.fm" data-extlink>Last.fm</a>
+          and <a href="https://www.wikipedia.org" data-extlink>Wikipedia</a>.
+          Released under the MIT license.
+        </div>
       </div>
     </div>`);
 
@@ -1098,4 +1120,43 @@ export function viewSettings() {
       nav.back();
     });
   }
+
+  // ── About section wiring ──────────────────────────────────────────
+  // Populate the version number and wire the three action buttons.
+  // Anything that opens an external URL goes through window.ipc.openUrl
+  // so it lands in the user's default browser, not the Electron window.
+  if ($('aboutVersion')) {
+    window.ipc?.appVersion?.()
+      .then(v => { if (v) $('aboutVersion').textContent = `v${v}`; })
+      .catch(() => { $('aboutVersion').textContent = ''; });
+  }
+  $('btnAboutRepo')?.addEventListener('click', () =>
+    window.ipc?.openUrl('https://github.com/DeceasedCranium/days-between'));
+  $('btnAboutReleases')?.addEventListener('click', () =>
+    window.ipc?.openUrl('https://github.com/DeceasedCranium/days-between/releases'));
+  $('btnAboutCheckUpdate')?.addEventListener('click', async () => {
+    showToast('Checking for updates…');
+    try {
+      const m = await import('./update-check.js');
+      const result = await m.checkForUpdate?.({ force: true });
+      if (result?.newer) {
+        showToast(`Update available — v${result.latest}`);
+      } else if (result) {
+        showToast(`You're up to date (v${result.current})`);
+      } else {
+        showToast('Could not reach GitHub — try again later');
+      }
+    } catch (err) {
+      console.warn('[about] update check failed:', err.message);
+      showToast('Could not reach GitHub — try again later');
+    }
+  });
+  // External-link clicks inside the credits paragraph
+  document.querySelectorAll('[data-extlink]').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const href = a.getAttribute('href');
+      if (href) window.ipc?.openUrl(href);
+    });
+  });
 }

@@ -1,5 +1,5 @@
 /* ── lastfm.js — scrobbling, artist bio, radio ─── */
-import { esc, safeInnerHTML, showToast } from './utils.js';
+import { esc, safeInnerHTML, showToast, dinfo } from './utils.js';
 import { getLfmSession, setLfmSession }  from './state.js';
 
 // LFM_KEY is injected at boot via IPC — never hardcode
@@ -84,7 +84,7 @@ function logWikiStats() {
   clearTimeout(_wikiStatsTimer);
   _wikiStatsTimer = setTimeout(() => {
     const s = _wikiStats;
-    console.info(`[wiki] batch — cache hits:${s.hit} fetched:${s.fetched} 404s:${s.notFound} transient:${s.transient} errors:${s.error}`);
+    dinfo(`[wiki] batch — cache hits:${s.hit} fetched:${s.fetched} 404s:${s.notFound} transient:${s.transient} errors:${s.error}`);
     _wikiStats = { hit: 0, fetched: 0, notFound: 0, transient: 0, error: 0 };
   }, 2500);
 }

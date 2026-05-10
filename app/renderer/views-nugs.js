@@ -1,5 +1,5 @@
 /* ── views-nugs.js — Nugs.net browsing views ──────────────────── */
-import { $, esc, fmt, artistColor, showToast, shuffle, confirmDialog } from './utils.js';
+import { $, esc, fmt, artistColor, showToast, shuffle, confirmDialog, dlog, dinfo } from './utils.js';
 import { state, nav, settings, store, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
 import { nugsApi, nugsContainerImage } from './api.js';
 // Pure helpers that don't touch DOM/state/network — live in shared/helpers.js
@@ -57,6 +57,11 @@ export async function viewNugsWelcome() {
 
   ci.style.overflow = '';
   ci.style.padding  = '';
+  // Cold-install pitch: when there's no Nugs auth, the bottom 3 sections
+  // (pinned, recently added, discover) all stay hidden — leaving the page
+  // looking like it's broken. Surface the sign-in CTA so the user knows
+  // what to do.
+  const signedIn = nugsAuth.hasToken();
   ci.innerHTML = `
     <div class="nugs-welcome">
       <div class="nugs-welcome-hero">
@@ -64,6 +69,15 @@ export async function viewNugsWelcome() {
         <h1>Nugs.net</h1>
         <p>Live recordings from your favourite artists.</p>
       </div>
+
+      ${signedIn ? '' : `
+      <div class="nugs-welcome-cta" id="nugsWelcomeSignInCta">
+        <div class="nugs-welcome-cta-text">
+          <strong>Sign in to nugs.net</strong>
+          <span>to see your library, pin artists, and stream subscription audio &amp; video.</span>
+        </div>
+        <button class="action-btn primary" id="nugsWelcomeSignInBtn">Open Settings</button>
+      </div>`}
 
       <section class="nugs-welcome-section" id="nugsWelLiveSection">
         <div class="nugs-welcome-section-header">
@@ -98,6 +112,11 @@ export async function viewNugsWelcome() {
         <div class="nugs-welcome-row" id="nugsWelDiscoverRow"></div>
       </section>
     </div>`;
+
+  // Sign-in CTA (cold install only)
+  $('nugsWelcomeSignInBtn')?.addEventListener('click', () => {
+    import('./views-user.js').then(m => m.viewSettings?.());
+  });
 
   // ── 1. Live & Recent ──────────────────────────────────────────────
   $('nugsWelLiveAll')?.addEventListener('click', () => viewNugsDashboard('live'));
@@ -201,7 +220,7 @@ async function loadWelRecentSection() {
   let source = '';
   try {
     const global = await nugsApi.recentlyAddedGlobal({ limit: 16 });
-    console.info('[nugs-welcome] recent: global probe returned', global.length, 'containers');
+    dinfo('[nugs-welcome] recent: global probe returned', global.length, 'containers');
     if (global.length >= 4) {
       containers = global;
       source = 'across the catalog';
@@ -220,7 +239,7 @@ async function loadWelRecentSection() {
     }
     const missing = pins.filter(p => !nugsReleasesCache[p.id]);
     if (missing.length) {
-      console.info('[nugs-welcome] recent: pre-fetching', missing.length, 'pinned-artist catalogs');
+      dinfo('[nugs-welcome] recent: pre-fetching', missing.length, 'pinned-artist catalogs');
       const queue = [...missing];
       async function worker() {
         while (queue.length) {
@@ -236,10 +255,10 @@ async function loadWelRecentSection() {
               const data = await nugsApi.catalog(p.id, offset);
               batch = data?.Response?.containers ?? data?.response?.containers ?? [];
               all.push(...batch);
-              console.info('[nugs-catalog]', p.name, 'page', page, '— got', batch.length, 'containers (offset:', offset, ')');
+              dinfo('[nugs-catalog]', p.name, 'page', page, '— got', batch.length, 'containers (offset:', offset, ')');
               offset += PAGE;
             } while (batch.length === PAGE);
-            console.info('[nugs-catalog]', p.name, '— total fetched:', all.length);
+            dinfo('[nugs-catalog]', p.name, '— total fetched:', all.length);
             nugsReleasesCache[p.id] = all;
           } catch (err) {
             console.warn('[nugs-welcome] recent: catalog fetch failed for', p.name, err.message);
@@ -255,7 +274,7 @@ async function loadWelRecentSection() {
       const cached = nugsReleasesCache[p.id];
       if (Array.isArray(cached)) pooled.push(...cached);
     }
-    console.info('[nugs-welcome] recent: pinned pool has', pooled.length, 'containers');
+    dinfo('[nugs-welcome] recent: pinned pool has', pooled.length, 'containers');
     if (pooled.length) {
       containers = pooled
         .sort((a, b) => Number(b.epochDateCreated ?? 0) - Number(a.epochDateCreated ?? 0))
@@ -412,7 +431,7 @@ function swapArtistTileImage(cardEl, artist) {
   getNugsArtistImage(artist.id).then(url => {
     if (!url) return;
     if (!document.body.contains(artEl)) {
-      console.warn('[nugs-art] swap skipped — artEl detached for', artist.name);
+      dlog('[nugs-art] swap skipped — artEl detached for', artist.name);
       return;
     }
     // Detached <img> elements with `loading="lazy"` never trigger their
@@ -431,7 +450,7 @@ function swapArtistTileImage(cardEl, artist) {
       artEl.appendChild(play);
     };
     img.onerror = () => {
-      console.warn('[nugs-art] image FAILED to load for', artist.name, '—', url);
+      dlog('[nugs-art] image FAILED to load for', artist.name, '—', url);
     };
     img.src = url;
   }).catch(err => {
@@ -789,10 +808,10 @@ export async function nugsViewArtist(artist) {
         const data = await nugsApi.catalog(artist.id, offset);
         batch = data?.Response?.containers ?? data?.response?.containers ?? [];
         all   = all.concat(batch);
-        console.info('[nugs-catalog]', artist.name, 'page', page, '— got', batch.length, 'containers (offset:', offset, ')');
+        dinfo('[nugs-catalog]', artist.name, 'page', page, '— got', batch.length, 'containers (offset:', offset, ')');
         offset += PAGE;
       } while (batch.length === PAGE);
-      console.info('[nugs-catalog]', artist.name, '— total fetched:', all.length);
+      dinfo('[nugs-catalog]', artist.name, '— total fetched:', all.length);
       nugsReleasesCache[artist.id] = all;
     }
     renderArtists(state.filteredArtists);
@@ -967,15 +986,15 @@ export async function nugsViewArtist(artist) {
           // play counts will look low — that's the upstream limitation
           // we'd address with setlist.fm in v1.13.
           const d = nugsSongsDiagnostics(allReleases);
-          console.info('[nugs-songs]', artist.name, '— containers:',
+          dinfo('[nugs-songs]', artist.name, '— containers:',
             d.totalContainers, '· with setlist:', d.withSetlist,
             `(${d.coveragePct}%)`, '· avg tracks/show:', d.avgTracksPerShow,
             '· unique songs:', songCatalog.length);
           if (d.sampleEmpty) {
-            console.info('[nugs-songs] sample container WITHOUT setlist:', d.sampleEmpty);
+            dinfo('[nugs-songs] sample container WITHOUT setlist:', d.sampleEmpty);
           }
           if (d.sampleFilled) {
-            console.info('[nugs-songs] sample container WITH setlist:', d.sampleFilled);
+            dinfo('[nugs-songs] sample container WITH setlist:', d.sampleFilled);
           }
         }
         if (!selectedSongKey) {
@@ -1189,7 +1208,7 @@ export async function nugsViewRelease(artist, containerId) {
     }
 
     if (showArtUrl && artEl) {
-      console.log('[Nugs Art] Loading from CDN:', showArtUrl);
+      dlog('[Nugs Art] Loading from CDN:', showArtUrl);
       const img = document.createElement('img');
       img.alt             = displayDate || artist.name;
       img.style.width     = '100%';
@@ -1201,7 +1220,7 @@ export async function nugsViewRelease(artist, containerId) {
           fetchLastFmFallback();
           return;
         }
-        console.log(`[Nugs Art] SUCCESS! ${img.naturalWidth}x${img.naturalHeight}`);
+        dlog(`[Nugs Art] SUCCESS! ${img.naturalWidth}x${img.naturalHeight}`);
         artEl.innerHTML = '';
         artEl.appendChild(img);
         artEl.style.background = 'transparent';

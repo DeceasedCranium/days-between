@@ -33,7 +33,7 @@
       <span id="scraperIndicator" class="titlebar-scraper" style="display:none;">⟳ Scraping</span>
     </div>
     <div class="titlebar-controls">
-      <button class="tb-icon-btn" id="btnHelp"     title="Keyboard shortcuts (?)">&#63;</button>
+      <button class="tb-icon-btn" id="btnHelp"     title="Help (? for shortcuts)">&#63;</button>
       <button class="tb-icon-btn" id="btnSettings" title="Settings">&#9881;</button>
       <button class="tb-icon-btn" id="btnMini"     title="Mini Player">&#8862;</button>
       <button class="btn-min"   title="Minimize">&#8722;</button>
@@ -276,13 +276,31 @@
     </div>
   </div>
 
-  <!-- Keyboard shortcuts modal -->
+  <!-- Help modal — app explanation + keyboard shortcuts -->
   <div id="shortcutsModal" class="shortcuts-modal" style="display:none">
     <div class="shortcuts-backdrop"></div>
     <div class="shortcuts-box">
       <div class="shortcuts-header">
-        <span class="shortcuts-title">Keyboard Shortcuts</span>
+        <span class="shortcuts-title">Help</span>
         <button class="shortcuts-close" id="shortcutsClose">&#10005;</button>
+      </div>
+      <div class="shortcuts-about">
+        <p>
+          <strong>Days Between</strong> is a desktop client for live concert
+          recordings. Browse 70,000+ free shows from the
+          <a href="https://relisten.net" data-extlink>Relisten</a> archive,
+          stream subscription audio &amp; video from
+          <a href="https://nugs.net" data-extlink>Nugs.net</a>, and
+          listen to ongoing webcasts via
+          <a href="https://mixlr.com" data-extlink>Mixlr</a> — all from
+          one library that knows what you've heard and what you've been to.
+        </p>
+        <p class="shortcuts-about-tip">
+          New here? Pin an artist in the sidebar (the 📌 on hover), browse
+          to a show, and click ▶. Settings (⚙) holds Last.fm scrobbling,
+          Nugs sign-in, themes, and EQ. The same pin appears below for
+          keyboard shortcuts.
+        </p>
       </div>
       <div class="shortcuts-grid">
         <div class="shortcuts-section">

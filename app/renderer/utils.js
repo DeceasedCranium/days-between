@@ -2,6 +2,21 @@
 
 export const $ = (id) => document.getElementById(id);
 
+/* ── Debug logging ────────────────────────────────────────────────────────
+ * Gated by `localStorage.daysBetweenDebug === '1'`. Production users see a
+ * clean console; developers can `localStorage.daysBetweenDebug = '1'` and
+ * reload to get the verbose tracing. console.warn / console.error are NEVER
+ * gated — they always fire because they're real-failure signals. Use dlog
+ * for "I want to know what's happening but the user shouldn't see it."
+ * ────────────────────────────────────────────────────────────────────── */
+const _DEBUG = (() => {
+  try { return localStorage.getItem('daysBetweenDebug') === '1'; }
+  catch { return false; }
+})();
+export function dlog(...args) { if (_DEBUG) console.log(...args); }
+export function dinfo(...args) { if (_DEBUG) console.info(...args); }
+export const isDebug = () => _DEBUG;
+
 export const fmt = (secs) => {
   if (!secs || isNaN(secs)) return '0:00';
   return `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;

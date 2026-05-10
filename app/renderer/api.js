@@ -143,12 +143,6 @@ export const nugsApi = {
       if (text.trimStart().startsWith('<')) return []; // auth wall
       const data = JSON.parse(text);
       const containers = data?.Response?.containers ?? data?.response?.containers ?? [];
-      // Diagnostic — dump shape once so we can verify global recents work.
-      if (!nugsApi._recentDumped) {
-        nugsApi._recentDumped = true;
-        console.info('[nugs-recent] global recent count:', containers.length,
-          containers[0] ? '— sample container artist=' + containers[0].artistName : '');
-      }
       return containers;
     } catch (err) {
       console.warn('[nugs] recentlyAddedGlobal failed:', err.message);

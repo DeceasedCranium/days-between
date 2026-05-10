@@ -51,32 +51,37 @@ function showUpdateBadge({ version, releaseUrl, body }) {
   requestAnimationFrame(() => badge.classList.add('visible'));
 }
 
-async function check() {
+/* Inspect GitHub releases and (optionally) show the auto-badge. Returns a
+ * structured result so the About-panel "Check for updates now" button can
+ * report success/no-op without showing the bottom-right badge twice.
+ *
+ * Returns null when the check itself fails (network down, rate-limited).
+ *  { current, latest, newer, releaseUrl, body }  on success.
+ */
+export async function checkForUpdate({ silent = false } = {}) {
   try {
     const current = await window.ipc?.appVersion?.();
-    if (!current) return;
+    if (!current) return null;
     const r = await fetch(RELEASE_API, {
       headers: { 'Accept': 'application/vnd.github+json' },
     });
-    if (!r.ok) {
-      // Silent — rate-limited or transient network issue, try next launch.
-      return;
-    }
+    if (!r.ok) return null;
     const data = await r.json();
-    const latest = data?.tag_name;
-    if (!latest) return;
-    if (compareVersions(latest, current) <= 0) return;
-    showUpdateBadge({
-      version:    String(latest).replace(/^v/, ''),
-      releaseUrl: data.html_url ?? `https://github.com/${REPO}/releases/latest`,
-      body:       data.body ?? '',
-    });
+    const latest = String(data?.tag_name ?? '').replace(/^v/, '');
+    if (!latest) return null;
+    const newer = compareVersions(latest, current) > 0;
+    const releaseUrl = data.html_url ?? `https://github.com/${REPO}/releases/latest`;
+    if (newer && !silent) {
+      showUpdateBadge({ version: latest, releaseUrl, body: data.body ?? '' });
+    }
+    return { current, latest, newer, releaseUrl, body: data.body ?? '' };
   } catch (err) {
     // Network error / no internet / etc. — silent.
     console.info('[update-check] skipped:', err.message);
+    return null;
   }
 }
 
 export function initUpdateCheck() {
-  setTimeout(check, STARTUP_DELAY_MS);
+  setTimeout(() => checkForUpdate().catch(() => {}), STARTUP_DELAY_MS);
 }

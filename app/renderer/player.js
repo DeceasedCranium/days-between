@@ -989,6 +989,15 @@ export function openShortcuts()  { $('shortcutsModal').style.display = 'flex'; }
 export function closeShortcuts() { $('shortcutsModal').style.display = 'none'; }
 $('shortcutsClose').addEventListener('click', closeShortcuts);
 $('btnHelp').addEventListener('click', openShortcuts);
+// External links inside the help modal's "About" paragraph go to the user's
+// default browser, not the Electron window.
+$('shortcutsModal').querySelectorAll('a[data-extlink]').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const href = a.getAttribute('href');
+    if (href) window.ipc?.openUrl(href);
+  });
+});
 $('shortcutsModal').addEventListener('click', e => {
   if (e.target === $('shortcutsModal') || e.target.classList.contains('shortcuts-backdrop')) closeShortcuts();
 });

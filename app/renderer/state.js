@@ -160,7 +160,10 @@ export const store = {
       playedAt:   new Date().toISOString(),
       duration:   track.duration ?? 0,
     });
-    if (hist.length > 100) hist.length = 100;
+    // Cap raised from 100 to 1000 in v2.0 — heavy listeners hit the
+    // old cap in days, which silently truncated the listening-stats
+    // math. 1000 entries × ~200 bytes = ~200 KB persisted; trivial.
+    if (hist.length > 1000) hist.length = 1000;
     _set('db-history', hist);
   },
 
