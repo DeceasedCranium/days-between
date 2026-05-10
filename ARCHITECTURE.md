@@ -198,3 +198,15 @@ For day-to-day source iteration without rebuilding the package:
 ```bash
 ./days-update.sh    # rsyncs the working tree into /opt/days-between/
 ```
+
+For a clean version-bumped install:
+
+```bash
+makepkg -f            # build the .pkg.tar.zst
+./install-pkg.sh      # pacman -U with --overwrite, picks the newest pkg
+```
+
+`install-pkg.sh` uses `--overwrite` because `days-update.sh` rsyncs introduce
+files that pacman doesn't track — without the flag, `pacman -U` rejects the
+upgrade with a "conflicting files" error any time the release adds a new
+source file.
