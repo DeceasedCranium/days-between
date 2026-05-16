@@ -587,6 +587,38 @@ export function formatTaperLabel(source) {
   return raw;
 }
 
+/** Pick the index of the source to default to when opening a show.
+ *
+ *  Default behaviour matches the v1.x picker — return the index of the
+ *  highest-rated source (which Relisten generally returns at sources[0]).
+ *
+ *  When `preferSoundboard` is true (Settings → Playback → "Prefer
+ *  Soundboard when available"), prefer the highest-rated source that
+ *  classifies as SBD. Falls back to overall-top-rated when no SBD exists.
+ *  Matrix recordings aren't promoted by this preference — a tape trader
+ *  who picks "prefer SBD" wants the dry board feed, not a mix.
+ *
+ *  Returns 0 for empty / single-source inputs so the caller can pass the
+ *  return value straight into renderSourceArea(idx) without checking. */
+export function pickPreferredSourceIdx(sources, { preferSoundboard = false } = {}) {
+  if (!Array.isArray(sources) || sources.length === 0) return 0;
+  if (sources.length === 1) return 0;
+
+  const ratingOf = (s) => s?.avg_rating ?? 0;
+  const topOverallIdx = sources
+    .map((s, i) => ({ i, r: ratingOf(s) }))
+    .sort((a, b) => b.r - a.r)[0].i;
+
+  if (!preferSoundboard) return topOverallIdx;
+
+  const sbdCandidates = sources
+    .map((s, i) => ({ i, s, r: ratingOf(s) }))
+    .filter(x => classifySource(x.s).type === 'SBD')
+    .sort((a, b) => b.r - a.r);
+
+  return sbdCandidates.length ? sbdCandidates[0].i : topOverallIdx;
+}
+
 /** True when the given source is *clearly* the best of the bunch — well-
  *  rated, well-reviewed, and meaningfully better than the next contender.
  *  Used to mark the BEST badge on the source picker. Conservative on

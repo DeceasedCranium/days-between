@@ -754,6 +754,15 @@ export function viewSettings() {
           <span class="toggle-slider"></span>
         </label>
       </div>
+      <div class="settings-row">
+        <div class="settings-row-label">Prefer Soundboard
+          <div class="settings-row-sub">When a show has multiple sources, default to the highest-rated soundboard instead of the highest-rated overall. You can still pick any source manually on the show page.</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="togglePreferSbd" ${s.preferSoundboard ? 'checked' : ''}>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
     </div>
 
     <div class="settings-section">
@@ -925,6 +934,7 @@ export function viewSettings() {
   });
 
   $('toggleNotifications').addEventListener('change', e => settings.setKey('notifications', e.target.checked));
+  $('togglePreferSbd')?.addEventListener('change', e => settings.setKey('preferSoundboard', e.target.checked));
 
   // ── EQ controls ──────────────────────────────────
   $('toggleEq').addEventListener('change', e => {

@@ -22,6 +22,7 @@ import {
   classifySource,
   formatTaperLabel,
   isBestSource,
+  pickPreferredSourceIdx,
 } from '../shared/helpers.js';
 import {
   isAvailable as setlistFmAvailable,
@@ -2068,7 +2069,12 @@ export function renderShow(show, artist) {
       }));
   }
 
-  renderSourceArea(0);
+  // Initial source selection honours Settings → "Prefer Soundboard when
+  // available." When the setting is off (default), pickPreferredSourceIdx
+  // returns the highest-rated overall source — same as the v1.x behaviour
+  // which just used sources[0] (Relisten's payload is already rating-sorted).
+  const preferSoundboard = settings.getKey('preferSoundboard', false);
+  renderSourceArea(pickPreferredSourceIdx(sources, { preferSoundboard }));
   $('btnPlayAll').addEventListener('click', () => {
     const best = sources.find(s => s.is_soundboard) ?? sources[0];
     if (best) player.playSource(best);

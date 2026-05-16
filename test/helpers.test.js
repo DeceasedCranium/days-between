@@ -38,6 +38,7 @@ import {
   classifySource,
   formatTaperLabel,
   isBestSource,
+  pickPreferredSourceIdx,
 } from '../app/shared/helpers.js';
 
 
@@ -869,4 +870,75 @@ test('isBestSource accepts review_count as a synonym for num_reviews', () => {
 test('isBestSource returns false for single-source shows', () => {
   const sources = [{ avg_rating: 10, num_reviews: 100 }];
   assert.equal(isBestSource(sources[0], sources), false);
+});
+
+/* ── pickPreferredSourceIdx ─────────────────────────────────────────────── */
+
+test('pickPreferredSourceIdx default — returns highest-rated overall', () => {
+  const sources = [
+    { source: 'AUD', avg_rating: 9.0 },
+    { source: 'AUD', avg_rating: 9.8 },
+    { source: 'SBD', avg_rating: 8.5 },
+  ];
+  assert.equal(pickPreferredSourceIdx(sources), 1);
+});
+
+test('pickPreferredSourceIdx with preferSoundboard prefers SBD over higher-rated AUD', () => {
+  const sources = [
+    { source: 'AUD', avg_rating: 9.8 },
+    { source: 'SBD', avg_rating: 8.5 },
+    { source: 'AUD', avg_rating: 9.5 },
+  ];
+  assert.equal(pickPreferredSourceIdx(sources, { preferSoundboard: true }), 1);
+});
+
+test('pickPreferredSourceIdx with preferSoundboard picks highest-rated SBD when multiple exist', () => {
+  const sources = [
+    { source: 'AUD', avg_rating: 9.9 },
+    { source: 'SBD', avg_rating: 8.0 },
+    { source: 'SBD', avg_rating: 9.2 },
+    { source: 'SBD', avg_rating: 8.7 },
+  ];
+  assert.equal(pickPreferredSourceIdx(sources, { preferSoundboard: true }), 2);
+});
+
+test('pickPreferredSourceIdx falls back to overall top when no SBD exists', () => {
+  const sources = [
+    { source: 'AUD', avg_rating: 8.0 },
+    { source: 'AUD', avg_rating: 9.5 },
+    { source: 'MTX', avg_rating: 9.0 },
+  ];
+  assert.equal(pickPreferredSourceIdx(sources, { preferSoundboard: true }), 1);
+});
+
+test('pickPreferredSourceIdx: Matrix does NOT count as soundboard for the preference', () => {
+  // The preference is for dry board feed specifically — a user who turns
+  // on "prefer SBD" doesn't want a matrix (board + audience mix). With
+  // AUD rated higher than the Matrix, the function MUST return AUD: if
+  // Matrix were being treated as SBD the function would pick it as the
+  // top SBD candidate; if it isn't, no SBDs exist, fall back to overall
+  // top (which is the AUD).
+  const sources = [
+    { source: 'AUD',                                     avg_rating: 9.9 },
+    { source: 'Matrix (see notes)', is_soundboard: true, avg_rating: 9.5 },
+  ];
+  assert.equal(pickPreferredSourceIdx(sources, { preferSoundboard: true }), 0);
+});
+
+test('pickPreferredSourceIdx handles empty / single-source / null gracefully', () => {
+  assert.equal(pickPreferredSourceIdx([]),                                          0);
+  assert.equal(pickPreferredSourceIdx(null),                                        0);
+  assert.equal(pickPreferredSourceIdx(undefined),                                   0);
+  assert.equal(pickPreferredSourceIdx([{ source: 'AUD' }]),                         0);
+  assert.equal(pickPreferredSourceIdx([{ source: 'AUD' }], { preferSoundboard: true }), 0);
+});
+
+test('pickPreferredSourceIdx uses is_soundboard fallback when source field is empty', () => {
+  // Some Relisten records have empty `source` strings; the boolean flag
+  // is the safe fallback classifier.
+  const sources = [
+    { source: '', is_soundboard: false, avg_rating: 9.5 },
+    { source: '', is_soundboard: true,  avg_rating: 8.0 },
+  ];
+  assert.equal(pickPreferredSourceIdx(sources, { preferSoundboard: true }), 1);
 });
