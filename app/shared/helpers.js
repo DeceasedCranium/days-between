@@ -635,6 +635,169 @@ export function isBestSource(source, allSources) {
   return (rating - second) >= 0.1;
 }
 
+/* ── Advanced Search: multi-criteria setlist filtering (v2.2) ─────────────
+ *
+ * Backs the JerryBase-style Advanced Search page. Takes the normalized
+ * setlists cached by setlistfm.js (see normalizeSetlistForSearch) and a
+ * criteria object, returns the matching setlists.
+ *
+ * Criteria object shape — every field optional, every condition ANDed:
+ *
+ *   {
+ *     dateFrom:    '1977-01-01',          // inclusive
+ *     dateTo:      '1977-12-31',
+ *     month:       5,                       // 1-12, any year
+ *     day:         8,                       // 1-31, any year
+ *     dayOfWeek:   0,                       // 0=Sun … 6=Sat
+ *     venueName:   'barton',                // case-insensitive substring
+ *     city:        'ithaca',
+ *     state:       'NY',                    // exact match (state code)
+ *     tourName:    'spring',
+ *     songs: [
+ *       {
+ *         name:      'Jack Straw',          // normalized internally
+ *         position:  'show-opener'           // see POSITION_OPTIONS below
+ *                  | 'show-closer'
+ *                  | 'set-N-opener' / 'set-N-closer' / 'set-N-anywhere'
+ *                  | 'encore-opener' / 'encore-closer' / 'encore-anywhere'
+ *                  | 'encore'                 // synonym for encore-anywhere
+ *                  | 'anywhere',              // default
+ *         segueInto: 'Fire on the Mountain', // optional — X → Y (segue match)
+ *         followedBy: 'Fire on the Mountain',// optional — consecutive (no segue req)
+ *       },
+ *       …
+ *     ],
+ *   }
+ *
+ * Pure function. No IO. Easily unit-tested. Returns the setlists in
+ * input order; sorting is the caller's job (post-filter is cheap).
+ * ─────────────────────────────────────────────────────────────────── */
+
+const _POSITION_RE = /^(show|set-\d+|encore)(-opener|-closer|-anywhere)?$/;
+
+export function searchSetlists(setlists, criteria = {}) {
+  if (!Array.isArray(setlists)) return [];
+  const c = criteria ?? {};
+
+  return setlists.filter(sl => {
+    // ── Date filters ──────────────────────────────────────────
+    if (!sl?.date) return false;
+    if (c.dateFrom && sl.date < c.dateFrom) return false;
+    if (c.dateTo   && sl.date > c.dateTo)   return false;
+
+    if (c.month != null || c.day != null || c.dayOfWeek != null) {
+      const [y, m, d] = sl.date.split('-').map(n => parseInt(n, 10));
+      if (c.month != null && m !== c.month) return false;
+      if (c.day   != null && d !== c.day)   return false;
+      if (c.dayOfWeek != null) {
+        // Use UTC to avoid local-timezone day shifts
+        const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+        if (dow !== c.dayOfWeek) return false;
+      }
+    }
+
+    // ── Venue / city / state / tour filters ──────────────────
+    const containsI = (haystack, needle) => {
+      if (!needle) return true;
+      if (!haystack) return false;
+      return String(haystack).toLowerCase().includes(String(needle).toLowerCase());
+    };
+    if (!containsI(sl.venue, c.venueName)) return false;
+    if (!containsI(sl.city,  c.city))      return false;
+    if (c.state    && (sl.state ?? '').toUpperCase() !== String(c.state).toUpperCase()) return false;
+    if (!containsI(sl.tour,  c.tourName))  return false;
+
+    // ── Song criteria — every row must match ─────────────────
+    const songRows = Array.isArray(c.songs) ? c.songs : [];
+    for (const row of songRows) {
+      if (!matchSongRow(sl, row)) return false;
+    }
+    return true;
+  });
+}
+
+/* Internal — true if the setlist satisfies a single song-criteria row. */
+function matchSongRow(sl, row) {
+  if (!row?.name) return true; // empty row matches everything
+  const target = normaliseSongTitle(row.name);
+  const position = row.position || 'anywhere';
+
+  // Flatten all songs in the show with set/position context. Each entry:
+  //   { name, segue, set, isEncore, setIdx, posInSet, lastInSet, lastInShow }
+  const flat = [];
+  let lastNonEncoreSetIdx = -1;
+  sl.sets.forEach((set, setIdx) => {
+    if (!set.encore) lastNonEncoreSetIdx = setIdx;
+  });
+  sl.sets.forEach((set, setIdx) => {
+    set.songs.forEach((song, songIdx) => {
+      flat.push({
+        name:       normaliseSongTitle(song.name),
+        segue:      !!song.segue,
+        set:        set.label,
+        isEncore:   !!set.encore,
+        setIdx,
+        // 1-indexed set number (only counts non-encore sets for "set-1" / "set-2" addressing)
+        setNum:     set.encore ? null : sl.sets.slice(0, setIdx + 1).filter(x => !x.encore).length,
+        posInSet:   songIdx,
+        lastInSet:  songIdx === set.songs.length - 1,
+        firstInSet: songIdx === 0,
+        isLastNonEncoreSet: setIdx === lastNonEncoreSetIdx,
+        isLastSet:  setIdx === sl.sets.length - 1,
+      });
+    });
+  });
+
+  // Find candidate slots that match the song at the requested position.
+  const candidates = flat.filter(s => s.name === target && matchesPosition(s, position));
+  if (!candidates.length) return false;
+
+  // If segueInto / followedBy specified, require the NEXT song in the
+  // flattened list (across set boundaries) to match.
+  if (row.segueInto || row.followedBy) {
+    const nextTarget = normaliseSongTitle(row.segueInto || row.followedBy);
+    const requireSegue = !!row.segueInto;
+    for (const cand of candidates) {
+      const idx = flat.indexOf(cand);
+      const next = flat[idx + 1];
+      if (!next) continue;
+      if (next.name !== nextTarget) continue;
+      // segueInto requires the segue flag; followedBy doesn't
+      if (requireSegue && !cand.segue) continue;
+      return true;
+    }
+    return false;
+  }
+  return true;
+}
+
+/* Position matcher — given a song's slot info, true if it matches the
+   requested position keyword. */
+function matchesPosition(slot, position) {
+  if (!position || position === 'anywhere') return true;
+
+  // show-* applies show-wide
+  if (position === 'show-opener') return slot.setIdx === 0 && slot.firstInSet;
+  if (position === 'show-closer') return slot.isLastNonEncoreSet && slot.lastInSet;
+
+  // encore-*
+  if (position === 'encore' || position === 'encore-anywhere') return slot.isEncore;
+  if (position === 'encore-opener') return slot.isEncore && slot.firstInSet;
+  if (position === 'encore-closer') return slot.isEncore && slot.lastInSet;
+
+  // set-N-*
+  const m = /^set-(\d+)(?:-(opener|closer|anywhere))?$/.exec(position);
+  if (m) {
+    const n   = parseInt(m[1], 10);
+    const sub = m[2] || 'anywhere';
+    if (slot.setNum !== n) return false;
+    if (sub === 'opener') return slot.firstInSet;
+    if (sub === 'closer') return slot.lastInSet;
+    return true; // anywhere in set N
+  }
+  return false;
+}
+
 /* ── Semver-ish comparison (update notifier) ──────────────────────────────── */
 
 /** Compare two semver-ish strings (e.g. "1.9.0" vs "1.10.0").

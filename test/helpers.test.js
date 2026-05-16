@@ -39,6 +39,7 @@ import {
   formatTaperLabel,
   isBestSource,
   pickPreferredSourceIdx,
+  searchSetlists,
 } from '../app/shared/helpers.js';
 
 
@@ -941,4 +942,213 @@ test('pickPreferredSourceIdx uses is_soundboard fallback when source field is em
     { source: '', is_soundboard: true,  avg_rating: 8.0 },
   ];
   assert.equal(pickPreferredSourceIdx(sources, { preferSoundboard: true }), 1);
+});
+
+/* ── searchSetlists — Advanced Search backbone ─────────────────────────── */
+
+// Realistic normalized fixture — Cornell '77 + a smaller comparison show.
+// Matches the shape produced by setlistfm.js normalizeSetlistForSearch.
+const _cornell77 = {
+  date:    '1977-05-08',
+  venue:   'Barton Hall, Cornell University',
+  city:    'Ithaca',
+  state:   'NY',
+  country: 'US',
+  tour:    'Spring 1977',
+  sets: [
+    {
+      label: 'Set 1', encore: false,
+      songs: [
+        { name: "New Minglewood Blues", segue: false, info: null },
+        { name: 'Loser',                segue: false, info: null },
+        { name: 'El Paso',              segue: false, info: null },
+        { name: 'They Love Each Other', segue: false, info: null },
+        { name: 'Jack Straw',           segue: false, info: null },
+      ],
+    },
+    {
+      label: 'Set 2', encore: false,
+      songs: [
+        { name: 'Scarlet Begonias',     segue: true,  info: null },  // → Fire (segue)
+        { name: 'Fire on the Mountain', segue: false, info: null },
+        { name: 'Estimated Prophet',    segue: false, info: null },
+        { name: 'St. Stephen',          segue: true,  info: null },  // → NFA
+        { name: 'Not Fade Away',        segue: true,  info: null },  // → NFA reprise
+        { name: 'Saint Stephen reprise', segue: false, info: null },
+        { name: 'Morning Dew',          segue: false, info: null },
+      ],
+    },
+    {
+      label: 'Encore', encore: true,
+      songs: [
+        { name: 'One More Saturday Night', segue: false, info: null },
+      ],
+    },
+  ],
+};
+
+const _other = {
+  date:    '1995-07-09',
+  venue:   'Soldier Field',
+  city:    'Chicago',
+  state:   'IL',
+  country: 'US',
+  tour:    'Summer 1995',
+  sets: [
+    {
+      label: 'Set 1', encore: false,
+      songs: [
+        { name: 'Touch of Grey',    segue: false, info: null },
+        { name: 'Jack Straw',       segue: false, info: null },
+      ],
+    },
+    {
+      label: 'Set 2', encore: false,
+      songs: [
+        { name: 'Eyes of the World', segue: false, info: null },
+        { name: 'Black Peter',       segue: false, info: null },
+      ],
+    },
+    {
+      label: 'Encore', encore: true,
+      songs: [
+        { name: 'Box of Rain', segue: false, info: null },
+      ],
+    },
+  ],
+};
+const _all = [_cornell77, _other];
+
+test('searchSetlists: empty criteria returns all setlists', () => {
+  assert.equal(searchSetlists(_all, {}).length, 2);
+  assert.equal(searchSetlists(_all).length, 2);
+});
+
+test('searchSetlists: date range narrows the set', () => {
+  assert.equal(searchSetlists(_all, { dateFrom: '1977-01-01', dateTo: '1980-12-31' }).length, 1);
+  assert.equal(searchSetlists(_all, { dateFrom: '1995-01-01' }).length, 1);
+});
+
+test('searchSetlists: month/day filter (any year)', () => {
+  assert.equal(searchSetlists(_all, { month: 5, day: 8 }).length, 1);
+  assert.equal(searchSetlists(_all, { month: 7 }).length, 1);
+});
+
+test('searchSetlists: day-of-week filter', () => {
+  // 1977-05-08 was a Sunday (0); 1995-07-09 was also a Sunday.
+  assert.equal(searchSetlists(_all, { dayOfWeek: 0 }).length, 2);
+  assert.equal(searchSetlists(_all, { dayOfWeek: 3 }).length, 0);
+});
+
+test('searchSetlists: venue substring match (case-insensitive)', () => {
+  assert.equal(searchSetlists(_all, { venueName: 'barton' }).length, 1);
+  assert.equal(searchSetlists(_all, { venueName: 'SOLDIER' }).length, 1);
+});
+
+test('searchSetlists: state filter is exact', () => {
+  assert.equal(searchSetlists(_all, { state: 'NY' }).length, 1);
+  assert.equal(searchSetlists(_all, { state: 'IL' }).length, 1);
+  assert.equal(searchSetlists(_all, { state: 'CA' }).length, 0);
+});
+
+test('searchSetlists: tour substring match', () => {
+  assert.equal(searchSetlists(_all, { tourName: 'spring' }).length, 1);
+  assert.equal(searchSetlists(_all, { tourName: 'summer' }).length, 1);
+});
+
+test('searchSetlists: song anywhere — Jack Straw is in both shows', () => {
+  const out = searchSetlists(_all, { songs: [{ name: 'jack straw' }] });
+  assert.equal(out.length, 2);
+});
+
+test('searchSetlists: show-opener — Minglewood opens Cornell, only Cornell matches', () => {
+  const out = searchSetlists(_all, { songs: [{ name: 'New Minglewood Blues', position: 'show-opener' }] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].date, '1977-05-08');
+});
+
+test('searchSetlists: show-closer — Morning Dew closes Cornell (before encore)', () => {
+  const out = searchSetlists(_all, { songs: [{ name: 'Morning Dew', position: 'show-closer' }] });
+  assert.equal(out.length, 1);
+});
+
+test('searchSetlists: set-2-opener — Scarlet opens Set 2 at Cornell', () => {
+  const out = searchSetlists(_all, { songs: [{ name: 'Scarlet Begonias', position: 'set-2-opener' }] });
+  assert.equal(out.length, 1);
+});
+
+test('searchSetlists: set-1-anywhere — Jack Straw in Set 1 at both shows', () => {
+  const out = searchSetlists(_all, { songs: [{ name: 'Jack Straw', position: 'set-1-anywhere' }] });
+  assert.equal(out.length, 2);
+});
+
+test('searchSetlists: encore — Box of Rain matches the 1995 show', () => {
+  const out = searchSetlists(_all, { songs: [{ name: 'Box of Rain', position: 'encore' }] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].date, '1995-07-09');
+});
+
+test('searchSetlists: encore-anywhere is a synonym for encore', () => {
+  const out = searchSetlists(_all, { songs: [{ name: 'One More Saturday Night', position: 'encore-anywhere' }] });
+  assert.equal(out.length, 1);
+});
+
+test('searchSetlists: multiple song rows are ANDed', () => {
+  // Cornell has both Jack Straw (Set 1) AND Scarlet Begonias (Set 2)
+  const out = searchSetlists(_all, {
+    songs: [
+      { name: 'Jack Straw',       position: 'set-1-anywhere' },
+      { name: 'Scarlet Begonias', position: 'set-2-anywhere' },
+    ],
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].date, '1977-05-08');
+});
+
+test('searchSetlists: segueInto — Scarlet → Fire matches Cornell', () => {
+  const out = searchSetlists(_all, {
+    songs: [{ name: 'Scarlet Begonias', segueInto: 'Fire on the Mountain' }],
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].date, '1977-05-08');
+});
+
+test('searchSetlists: segueInto requires the segue flag (not just consecutive)', () => {
+  // 1995 show has Touch of Grey → Jack Straw consecutively but NO segue
+  // flag on Touch of Grey. segueInto should NOT match.
+  const out = searchSetlists(_all, {
+    songs: [{ name: 'Touch of Grey', segueInto: 'Jack Straw' }],
+  });
+  assert.equal(out.length, 0);
+});
+
+test('searchSetlists: followedBy matches consecutive songs even without segue flag', () => {
+  // followedBy is the looser "next song" check — doesn't require segue.
+  const out = searchSetlists(_all, {
+    songs: [{ name: 'Touch of Grey', followedBy: 'Jack Straw' }],
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].date, '1995-07-09');
+});
+
+test('searchSetlists: combining date range and song criteria', () => {
+  const out = searchSetlists(_all, {
+    dateFrom: '1990-01-01',
+    songs: [{ name: 'Eyes of the World', position: 'set-2-anywhere' }],
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].date, '1995-07-09');
+});
+
+test('searchSetlists: malformed input returns empty', () => {
+  assert.deepEqual(searchSetlists(null), []);
+  assert.deepEqual(searchSetlists(undefined), []);
+  assert.deepEqual(searchSetlists('not an array'), []);
+});
+
+test('searchSetlists: song row with no name matches everything (forgiving form rows)', () => {
+  // An Advanced Search form with an empty song row shouldn't filter out
+  // every result. The empty row is a no-op.
+  const out = searchSetlists(_all, { songs: [{ name: '' }] });
+  assert.equal(out.length, 2);
 });

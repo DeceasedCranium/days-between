@@ -229,9 +229,16 @@ export async function getArtistSongCounts(artist, opts = {}) {
   try {
     const setlists = await fetchAllSetlists(mbid, onProgress);
     const counts   = aggregateSongCountsFromSetlists(setlists);
-    // Persist as plain object (Map doesn't survive JSON).
+    // Normalize and persist the raw setlists alongside the counts so the
+    // v2.2 Advanced Search feature can run multi-criteria queries (venue,
+    // date range, song + position, segue partners) entirely against the
+    // local cache without hitting the setlist.fm API again. The
+    // aggregateSongCountsFromSetlists pass already walks every setlist
+    // we just fetched, so this normalization adds no new network cost.
+    const normalized = setlists.map(normalizeSetlistForSearch).filter(Boolean);
     await writeCache(cacheKey, {
       counts:        Object.fromEntries(counts),
+      setlists:      normalized,
       totalSetlists: setlists.length,
       mbid,
       artistName:    artist.name,
@@ -243,10 +250,111 @@ export async function getArtistSongCounts(artist, opts = {}) {
   }
 }
 
+/** Returns the normalized cached setlist array for the artist, or null if
+ *  setlist.fm data isn't available / cached. Used by Advanced Search. The
+ *  setlists are an opt-in side-effect of the song-counts cache flow — if
+ *  the user has never opened a song-stats page for this artist, the cache
+ *  won't be populated yet, and the caller should trigger a scan first
+ *  (typically via getArtistSongCounts with a progress callback). */
+export async function getArtistSetlists(artist, opts = {}) {
+  if (!isAvailable()) return null;
+  if (!artist?.name)  return null;
+  const { forceRefresh = false } = opts;
+
+  const mbid = await resolveArtistMbid(artist);
+  if (!mbid) return null;
+  const cacheKey = SONGS_CACHE_PREFIX + mbid;
+
+  if (!forceRefresh) {
+    const cached = await readCache(cacheKey, SETLIST_TTL_MS);
+    if (Array.isArray(cached?.setlists)) return cached.setlists;
+    // Cache exists but pre-dates v2.2 (only counts, no raw setlists) —
+    // fall through so the caller can trigger getArtistSongCounts to
+    // refresh the cache and get the full structure.
+  }
+  return null;
+}
+
 /** Convenience wrapper — returns the count for ONE specific song by name.
  *  Returns null when data is unavailable. */
 export async function getSongPlayCount(artist, songName, opts = {}) {
   const counts = await getArtistSongCounts(artist, opts);
   if (!counts) return null;
   return counts.get(normaliseSongTitle(songName)) ?? 0;
+}
+
+/* ── setlist.fm payload → search-friendly normalized shape ─────────────────
+ * setlist.fm ships its setlists in a verbose, partly-internationalised shape
+ * with DD-MM-YYYY dates, nested venue/city/country objects, and optional
+ * `name` / `encore` flags on each set. We slim this to a flat, predictable
+ * structure that the Advanced Search helper can scan quickly without
+ * traversing nested objects.
+ *
+ * Segue detection: setlist.fm doesn't ship a formal "segue" boolean, but the
+ * convention in well-curated Dead/Phish setlists is to put a `>` or `->`
+ * suffix on songs that segue into the next one. We strip the suffix from
+ * the stored song name but preserve a `segue: true` flag so the search
+ * helper can match "X → Y" queries.
+ *
+ * Returns null for malformed entries (no date / no sets) so the caller can
+ * filter them out.
+ * ─────────────────────────────────────────────────────────────────────── */
+function normalizeSetlistForSearch(sl) {
+  if (!sl || typeof sl !== 'object') return null;
+
+  // setlist.fm ships eventDate as DD-MM-YYYY. Convert to ISO YYYY-MM-DD
+  // so date-range filters and day-of-week derivation work cleanly.
+  const raw = sl.eventDate ?? '';
+  const m   = /^(\d{2})-(\d{2})-(\d{4})$/.exec(raw);
+  const date = m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+  if (!date) return null;
+
+  const v = sl.venue ?? {};
+  const c = v.city  ?? {};
+
+  // Walk sets, assigning a stable label ("Set 1" / "Set 2" / "Encore") so
+  // position queries like "Set 2 opener" have something to match against.
+  let nonEncoreCount = 0;
+  let encoreCount    = 0;
+  const setsIn  = sl.sets?.set ?? [];
+  const sets    = [];
+  for (const s of setsIn) {
+    const isEncore = !!s?.encore;
+    const songs    = (s?.song ?? [])
+      .map(song => {
+        const name = (song?.name ?? '').trim();
+        if (!name) return null;
+        const segueMatch = /\s*(?:->|>|~)\s*$/.exec(name);
+        return {
+          name:  segueMatch ? name.slice(0, segueMatch.index).trim() : name,
+          segue: !!segueMatch,
+          info:  song?.info ? String(song.info).trim() : null,
+        };
+      })
+      .filter(Boolean);
+    if (!songs.length) continue;
+
+    let label;
+    if (isEncore) {
+      encoreCount += 1;
+      label = encoreCount === 1 ? 'Encore' : `Encore ${encoreCount}`;
+    } else {
+      nonEncoreCount += 1;
+      label = s?.name?.trim() || `Set ${nonEncoreCount}`;
+    }
+
+    sets.push({ label, encore: isEncore, songs });
+  }
+
+  if (!sets.length) return null;
+
+  return {
+    date,
+    venue:   v.name ?? null,
+    city:    c.name ?? null,
+    state:   c.stateCode ?? c.state ?? null,
+    country: c.country?.code ?? null,
+    tour:    sl.tour?.name ?? null,
+    sets,
+  };
 }
