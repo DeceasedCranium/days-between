@@ -157,6 +157,7 @@ Short version: Electron main process owns filesystem / OS / Cast / MPRIS / signi
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the full per-release log going back to v1.0. Recent highlights:
 
+- **v2.2.0** — Setlist Intelligence II. Source picker rebuilt with colour-coded SBD/AUD/MTX/FM badges, taper credits, BEST pill, and a clickable archive.org link in the metadata block. New "Prefer Soundboard" setting in Settings. **JerryBase-style Advanced Search** — filter by date / venue / tour / day-of-week, add multiple song-position rows with segue support, typeahead autocomplete on every field, dual `▶ Relisten` and `🎤 Nugs` action buttons per result. setlist.fm API hardening — Accept-Language fix, slower rate limit, and a one-time cache migration that silently upgrades v2.0/v2.1 caches. 48 new unit tests (130 total).
 - **v2.0.0** — Distribution release. Polish + stability + identity pass: storage-bug audit, sidebar layout fix, debug-gated console, friendly error messages, About panel, first-run experience, README + screenshots, AppImage as primary Linux artifact, real installers across macOS / Linux / Windows. No new user-facing features beyond what shipped in v1.x — this is the "ready to share with friends" milestone.
 - **v1.14.0** — Personalized Show of the Day with For You / Global toggle and reason chips.
 - **v1.13.0** — setlist.fm live integration: authoritative per-song play counts.

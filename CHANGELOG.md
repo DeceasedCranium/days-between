@@ -3,6 +3,101 @@
 Per-release notes for Days Between, newest first. The README's
 [Version History](./README.md#version-history) section links here.
 
+## v2.2.0 — Setlist Intelligence II
+
+The first feature release after v2.0's "ready for strangers" pass.
+Three new capabilities aimed squarely at tape-trader use, plus
+supporting hardening to the setlist.fm integration.
+
+**Source picker rebuilt**
+- Every Relisten show payload ships multiple `sources[]`, each with a
+  free-text `source` field, taper credit, transferrer, lineage,
+  rating, and `upstream_identifier` (archive.org item). v1.x labelled
+  all of them as either 🎤 Soundboard or 🎧 Audience N — collapsing
+  the SBD / AUD / MTX / FM distinctions tape traders specifically
+  care about.
+- New picker shows colour-coded type badges (SBD green, AUD amber,
+  MTX purple, FM pink) plus taper name and rating + review count
+  per chip. A clearly-best source gets a BEST pill.
+- Default view shows the top 6 sources by rating; "Show N more ▾"
+  expander reveals the rest. Cornell '77's 23 sources are now
+  scannable instead of overwhelming.
+- Metadata block underneath the chips shows the active source's
+  full provenance: source description, taper / transferrer / lineage,
+  duration + track + set counts, review count, jam-charts flag, and
+  a clickable archive.org link.
+- Switching sources mid-track auto-pauses playback so the source
+  change is unmistakable.
+- Pure-helper classifier (`classifySource`) parses both the
+  free-text `source` field and the archive.org slug (`.sbd.` /
+  `.aud.` / `.matrix.` / `.fm.`) so Matrix recordings flagged
+  `is_soundboard=true` (because they include a board feed) now
+  correctly classify as MTX. 20 new unit tests covering edge cases.
+
+**"Prefer Soundboard when available" setting**
+- New toggle in Settings → Playback. When enabled, opening a show
+  defaults to the highest-rated SBD source instead of the highest-
+  rated overall. Matrix deliberately doesn't promote — the
+  preference is for dry board feed specifically. Falls back to top
+  overall when no SBD exists. 7 new unit tests.
+
+**Advanced Search (the big one)**
+- JerryBase-style multi-criteria search across an artist's entire
+  setlist.fm setlist history. Filter by date range, month/day (any
+  year), day-of-week, venue / city / state, tour, and one or more
+  songs with position constraints.
+- 15 position keywords per song: anywhere, show-opener, show-closer,
+  set-1/2/3-opener/closer/anywhere, encore-opener/closer/anywhere.
+  Optional segueInto (real segue — X → Y) or followedBy (just
+  consecutive) partner song.
+- Multiple song rows are ANDed. "Jack Straw as Set 1 opener AND
+  Eyes of the World in Set 2 AND venue contains Barton" works.
+- New "🔎 Advanced Search" featured sidebar tab as the entry point.
+- Typeahead combobox autocomplete on every text input — artist
+  picker (1000+ artists, type to narrow), song names (artist's
+  full repertoire), venues, cities, tours. Single shared popover,
+  keyboard navigable (↓ ↑ Enter Esc Tab).
+- Scan-aware progress: picking an artist whose setlist.fm scan
+  hasn't run yet triggers it with live "N/M setlists" progress;
+  form unlocks when ready, hidden when the artist isn't on
+  setlist.fm.
+- Each result row has TWO action buttons: `▶ Relisten` (pre-checks
+  availability — a setlist.fm-known date that Relisten doesn't
+  have a recording for shows a clear toast instead of navigating
+  away to an error page) and `🎤 Nugs` (resolves the Nugs artist
+  by name, fetches the catalog, finds the matching container,
+  navigates via nugsViewRelease — works even for shows Relisten
+  doesn't have).
+- Form + result state survives view navigation. Click a result →
+  open the show → press Back → land on Advanced Search with form
+  and results intact, ready to tweak.
+- Pure search engine (`searchSetlists`) lives in shared/helpers.js
+  with 21 new unit tests covering every position type, segue vs
+  followedBy distinction, date / venue / tour filters, multi-row
+  AND logic, and malformed input handling.
+
+**setlist.fm API hardening**
+- Send `Accept-Language: en` on every request. setlist.fm started
+  returning 406 Not Acceptable on `/artist/{mbid}/setlists` when
+  the header is absent; without this, every fresh scan failed
+  instantly.
+- Pin a vanilla User-Agent (`DaysBetween/2.x …`) to match what
+  setlist.fm's docs expect from API clients.
+- Bump per-request gap from 600ms to 850ms (~1.18 req/sec). Big
+  catalogs like Dead's 1,000+ setlists were tripping 429s every
+  4-5 pages on the old rate; 850ms keeps us comfortably below the
+  burst threshold so scans complete cleanly.
+- Cache schema extended to store normalized raw setlists alongside
+  the existing play counts. Pre-v2.2 caches (counts-only) are
+  auto-migrated on next use — anyone who opened a song-stats page
+  in v2.0/v2.1 gets their cache upgraded silently and unlocks
+  Advanced Search.
+
+**Tests**
+- 130 unit tests in total (82 + 48 new), all passing. New coverage
+  on classifySource / formatTaperLabel / isBestSource /
+  pickPreferredSourceIdx / searchSetlists.
+
 ## v2.0.0 — Distribution release
 
 Polish + stability + identity pass. The point at which Days Between stops
