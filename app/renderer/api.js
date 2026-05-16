@@ -36,8 +36,15 @@ const NUGS_CLIENT_ID = 'Eg7HuH873H65r5rt325UytR5429';
 
 // Cover-art URL builder + Nugs date parser — implementations live in
 // app/shared/helpers.js (browser-free) so they can be unit-tested. We
-// re-export here so existing import sites (`./api.js`) keep working.
-export { nugsContainerImage, parseNugsDate } from '../shared/helpers.js';
+// re-export from this module so existing import sites (`./api.js`)
+// keep working, AND import them locally so internal callers in this
+// file (nugsAuth.set construction inside login()) can use them too.
+// The `export ... from` form is re-export only; it does NOT bind the
+// symbols into module scope. Pure-re-export missed this for ~6 months
+// because the login() call site only fires on fresh sign-in (not on
+// refresh-token paths), and most users keep refreshing forever.
+import { nugsContainerImage, parseNugsDate } from '../shared/helpers.js';
+export { nugsContainerImage, parseNugsDate };
 
 /** Decode the JWT payload (no signature verification) — used for `exp` and legacy fields. */
 function decodeJwt(token) {
@@ -63,29 +70,89 @@ export const nugsApi = {
       username:   email,
       password:   password,
     });
-    const r = await fetch(`${NUGS_ID_URL}/connect/token`, {
-      method:  'POST',
-      headers: { 'User-Agent': NUGS_UA, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    });
-    if (!r.ok) throw new Error('nugs:login_failed');
-    const tokens = await r.json();
+
+    // ── Step 1: token endpoint ────────────────────────────────────────
+    // Previously every failure here threw a generic `nugs:login_failed`,
+    // collapsing distinct causes (bad creds, Cloudflare challenge, 2FA
+    // required, network down, etc.) into one toast. Now each failure
+    // mode raises its own typed error so the UI can show a useful
+    // message AND so we log the upstream response body for diagnostics.
+    let r;
+    try {
+      r = await fetch(`${NUGS_ID_URL}/connect/token`, {
+        method:  'POST',
+        headers: { 'User-Agent': NUGS_UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+    } catch (err) {
+      console.error('[nugs login] network error contacting id.nugs.net:', err);
+      throw new Error('nugs:network');
+    }
+    if (!r.ok) {
+      let detail = '';
+      try { detail = (await r.text()).slice(0, 400); } catch { /* ignore */ }
+      console.error('[nugs login] token endpoint:', r.status, r.statusText, '—', detail);
+      // 400/401 are genuine auth failures from Nugs's OAuth server
+      // (invalid_grant / invalid_client). Anything else is upstream.
+      if (r.status === 400 || r.status === 401) throw new Error('nugs:login_failed');
+      throw new Error(`nugs:auth_${r.status}`);
+    }
+    let tokens;
+    try {
+      tokens = await r.json();
+    } catch {
+      const txt = await r.text().catch(() => '');
+      console.error('[nugs login] non-JSON token response (likely Cloudflare challenge):', txt.slice(0, 400));
+      throw new Error('nugs:bad_response');
+    }
+    if (!tokens?.access_token) {
+      console.error('[nugs login] token response missing access_token:', tokens);
+      throw new Error('nugs:bad_response');
+    }
 
     // Decode JWT payload for legacy fields + the real `exp` claim
     const jwtPayload = decodeJwt(tokens.access_token);
 
+    // ── Step 2: userinfo + subscriptions ──────────────────────────────
+    // Both endpoints can return HTML error pages or 401s if Nugs's WAF
+    // intercepts the bearer token. Catch each independently so a
+    // userinfo glitch doesn't blame the subscription check (and vice
+    // versa). The JSON parse is the most common silent-failure point.
+    const fetchJson = async (url, label) => {
+      let resp;
+      try {
+        resp = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${tokens.access_token}`, 'User-Agent': NUGS_UA },
+        });
+      } catch (err) {
+        console.error(`[nugs login] ${label} network error:`, err);
+        throw new Error('nugs:network');
+      }
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => '');
+        console.error(`[nugs login] ${label} returned ${resp.status}:`, txt.slice(0, 400));
+        throw new Error(`nugs:auth_${resp.status}`);
+      }
+      try {
+        return await resp.json();
+      } catch {
+        const txt = await resp.text().catch(() => '');
+        console.error(`[nugs login] ${label} non-JSON response:`, txt.slice(0, 400));
+        throw new Error('nugs:bad_response');
+      }
+    };
+
     const [userInfo, subsArr] = await Promise.all([
-      fetch(`${NUGS_ID_URL}/connect/userinfo`, {
-        headers: { 'Authorization': `Bearer ${tokens.access_token}`, 'User-Agent': NUGS_UA },
-      }).then(r2 => r2.json()),
-      fetch(`${NUGS_SUBS_URL}/api/v1/me/subscriptions`, {
-        headers: { 'Authorization': `Bearer ${tokens.access_token}`, 'User-Agent': NUGS_UA },
-      }).then(r2 => r2.json()),
+      fetchJson(`${NUGS_ID_URL}/connect/userinfo`, 'userinfo'),
+      fetchJson(`${NUGS_SUBS_URL}/api/v1/me/subscriptions`, 'subscriptions'),
     ]);
 
     const sub    = Array.isArray(subsArr) ? subsArr[0] : (subsArr?.subscriptions?.[0] ?? subsArr);
     const planId = sub?.plan?.planId ?? sub?.promo?.plan?.planId ?? '';
-    if (!sub?.isContentAccessible) throw new Error('nugs:no_subscription');
+    if (!sub?.isContentAccessible) {
+      console.error('[nugs login] subscription not accessible — sub payload:', sub);
+      throw new Error('nugs:no_subscription');
+    }
 
     nugsAuth.set({
       access_token:    tokens.access_token,

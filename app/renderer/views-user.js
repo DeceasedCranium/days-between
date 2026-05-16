@@ -1087,9 +1087,16 @@ export function viewSettings() {
         await nugsApi.login(email, password);
         showToast('Signed in to nugs.net!'); renderArtists(state.filteredArtists); viewSettings();
       } catch (e) {
-        const msg = e.message === 'nugs:login_failed'    ? 'Invalid email or password.'
-                  : e.message === 'nugs:no_subscription' ? 'No active subscription found.'
-                  : 'Sign-in failed. Check your connection.';
+        // Always log the raw error so reproducing a user-reported login
+        // issue is just a "paste the console output" away.
+        console.error('[nugs sign-in] failed:', e);
+        const msg =
+            e.message === 'nugs:login_failed'    ? 'Invalid email or password.'
+          : e.message === 'nugs:no_subscription' ? 'No active subscription found on this account.'
+          : e.message === 'nugs:network'         ? "Couldn't reach nugs.net — check your internet connection."
+          : e.message === 'nugs:bad_response'    ? "Nugs returned an unexpected response — they may be requiring a captcha or 2FA the app can't handle. See DevTools console for details."
+          : e.message?.startsWith('nugs:auth_')  ? `Nugs returned ${e.message.replace('nugs:auth_', 'HTTP ')}. See DevTools console for details.`
+          : 'Sign-in failed. See DevTools console for details.';
         errEl.textContent = msg; errEl.style.display = 'block';
         loginBtn.disabled = false; loginBtn.textContent = 'Sign In';
       }

@@ -3,6 +3,53 @@
 Per-release notes for Days Between, newest first. The README's
 [Version History](./README.md#version-history) section links here.
 
+## v2.2.1 — Nugs sign-in error handling
+
+Bug-fix release prompted by a user report (thanks OddKey2242) — Nugs
+sign-in was failing for some accounts with the generic message
+"Sign-in failed. Check your connection." which hid the actual cause.
+
+The previous login flow collapsed every failure path into a single
+`nugs:login_failed` error: bad credentials, Cloudflare challenge,
+captcha required, 2FA, transient network error — all looked
+identical to the user (and to us trying to diagnose). Worse, the
+catch block in the Settings login handler discarded the underlying
+error.message entirely, so even a console-savvy user had nothing to
+copy back.
+
+Login flow now distinguishes:
+- `nugs:login_failed` — true bad credentials (HTTP 400 / 401 from
+  the OAuth token endpoint)
+- `nugs:no_subscription` — credentials work but no active sub
+- `nugs:network` — fetch threw before getting a response (DNS,
+  offline, connection refused, etc.)
+- `nugs:bad_response` — Nugs returned a non-JSON body (Cloudflare
+  challenge page is the canonical case; also fires when their
+  load balancer returns HTML error pages)
+- `nugs:auth_<status>` — any other non-OK status, surfaced with
+  the HTTP code so 403 / 429 / 503 each get their own message
+
+Every failure path now `console.error`s the upstream response body
+(capped at 400 chars) so future user-reported issues are
+copy-pasteable. The Settings UI maps each typed error to a clear
+message and explicitly points at DevTools when the upstream cause
+needs investigation.
+
+**Critical secondary fix:** the better error reporting flushed out a
+latent bug — `parseNugsDate` was *re-exported* from `api.js` but
+never actually imported into local module scope, so the final
+`nugsAuth.set(...)` call inside `login()` crashed with a
+`ReferenceError`. Nobody hit it for months because the only path
+that reaches that line is a *fresh* sign-in; every existing user has
+been on refresh-token flows since they originally signed in during
+an earlier version. Logging out and logging back in (which the
+user-reported bug forced people to do) exposed it. Adding an
+explicit `import { parseNugsDate } from '../shared/helpers.js'`
+fixes the regression.
+
+No new tests — this is purely error-handling structure around
+network code; the existing 130 unit tests still pass.
+
 ## v2.2.0 — Setlist Intelligence II
 
 The first feature release after v2.0's "ready for strangers" pass.
