@@ -277,6 +277,22 @@ body {
   box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 15%, transparent), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 
+/* Feature row — single full-width button for Advanced Search.
+   Slightly bigger and accent-tinted so it reads as a premium entry point. */
+.nav-row-feature { margin-top: 4px; }
+.nav-btn-feature {
+  font-size: 10.5px;
+  padding: 7px 4px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text2);
+}
+.nav-btn-feature:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
 .artist-list {
   flex: 1;
   overflow-y: auto;
@@ -5027,4 +5043,248 @@ html, body {
 .song-stats-sfm-loading {
   font-style: italic;
   opacity: 0.7;
+}
+
+/* ── Advanced Search view (v2.2) ─────────────────────────────────────── */
+.adv-search { max-width: 900px; margin: 0 auto; padding: 8px 4px; }
+.adv-search-header { margin-bottom: 18px; }
+.adv-search-header h2 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+.adv-search-sub      { color: var(--text3); font-size: 12px; line-height: 1.5; max-width: 640px; }
+
+.adv-search-form {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 20px;
+}
+
+.adv-row          { margin-bottom: 14px; }
+.adv-row-inline   { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.adv-row-inline > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.adv-grow         { flex: 1; min-width: 140px; }
+.adv-or           { color: var(--text3); font-size: 11px; padding-bottom: 8px; align-self: center; }
+
+.adv-label {
+  display: block; font-size: 11px; font-weight: 700;
+  color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+.adv-label-sm {
+  font-size: 10px; font-weight: 600;
+  color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em;
+}
+
+.adv-input {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font: inherit; font-size: 13px;
+  min-width: 0; width: 100%;
+}
+.adv-input:focus    { outline: none; border-color: var(--accent); }
+.adv-input-wide     { max-width: 340px; }
+.adv-input-sm       { max-width: 80px; }
+
+.adv-fieldset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px 14px;
+  margin-bottom: 14px;
+  background: transparent;
+}
+.adv-fieldset[disabled] { opacity: 0.5; pointer-events: none; }
+.adv-fieldset legend {
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text2);
+  padding: 0 8px;
+}
+.adv-and-note { color: var(--text3); font-weight: 500; text-transform: none; letter-spacing: 0; }
+
+.adv-scan-status {
+  margin: 4px 0 14px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg3);
+}
+.adv-scan-progress    { color: var(--accent); }
+.adv-scan-ready       { color: var(--text2); }
+.adv-scan-unavailable { color: #d99; }
+
+/* Song criteria rows */
+.adv-song-row { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed var(--border); }
+.adv-song-row:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+.adv-song-row-grid {
+  display: grid;
+  grid-template-columns: 1fr 220px auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.adv-row-remove {
+  width: 28px; height: 28px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text3); font-size: 16px; cursor: pointer;
+  border-radius: 6px;
+}
+.adv-row-remove:hover:not(:disabled) { color: #e57; border-color: #e57; }
+.adv-row-remove:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.adv-song-row-segue {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  padding-left: 4px;
+  font-size: 11px; color: var(--text3);
+}
+.adv-segue-label {
+  display: inline-flex; align-items: center; gap: 4px;
+  cursor: pointer;
+}
+.adv-segue-label input[type="radio"] { accent-color: var(--accent); }
+.adv-song-partner { max-width: 220px; }
+
+.adv-btn-secondary {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text2);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font: inherit; font-size: 12px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+.adv-btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+
+.adv-actions {
+  display: flex; gap: 10px; align-items: center;
+  margin-top: 6px;
+}
+
+/* Results */
+.adv-results { margin-top: 8px; }
+.adv-results-header {
+  font-size: 13px; color: var(--text);
+  margin-bottom: 10px;
+}
+.adv-results-sub { color: var(--text3); font-weight: 400; }
+.adv-results-list { display: flex; flex-direction: column; gap: 4px; }
+
+.adv-result-row {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.adv-result-row:hover {
+  background: var(--bg3);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.adv-result-date { font-weight: 700; font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
+.adv-result-venue { font-size: 13px; color: var(--text2); }
+.adv-result-tour  { font-size: 11px; color: var(--text3); margin-top: 2px; }
+.adv-result-action { font-size: 11px; color: var(--accent); white-space: nowrap; }
+
+.adv-results-empty {
+  text-align: center; padding: 40px 20px;
+  color: var(--text3);
+}
+.adv-results-empty-icon { font-size: 36px; margin-bottom: 10px; }
+
+/* ── Advanced Search: autocomplete popover ──────────────────────────── */
+.adv-ac-popover {
+  position: absolute;
+  z-index: 30000;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg2);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  padding: 4px 0;
+}
+.adv-ac-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--text2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.adv-ac-item:hover,
+.adv-ac-item.highlighted {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+
+/* Pretty scrollbar inside popover */
+.adv-ac-popover::-webkit-scrollbar       { width: 6px; }
+.adv-ac-popover::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Advanced Search: result row interaction states */
+.adv-result-row-loading {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.adv-result-row-loading .adv-result-action::after {
+  content: ' …';
+}
+.adv-result-row-unavailable {
+  opacity: 0.55;
+  cursor: default;
+}
+.adv-result-row-unavailable .adv-result-action {
+  color: var(--text3);
+}
+.adv-result-row-unavailable:hover {
+  background: var(--bg2);
+  border-color: var(--border);
+}
+
+/* Advanced Search: dual-action result buttons */
+.adv-result-actions { display: flex; gap: 6px; align-items: center; }
+.adv-result-btn {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  padding: 5px 10px;
+  font: inherit; font-size: 11px; font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.adv-result-btn:hover {
+  background: var(--bg4);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  color: var(--text);
+}
+.adv-result-btn-relisten:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.adv-result-btn-nugs:hover {
+  /* Nugs has its own brand colour-ish accent; keep it subtle */
+  border-color: #c08a3a;
+  color: #d6a45c;
+}
+.adv-result-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Row hover: no longer the click target — buttons are. Just a hover hint. */
+.adv-result-row { cursor: default; }
+.adv-result-row:hover {
+  background: var(--bg3);
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
 }

@@ -93,6 +93,15 @@ document.querySelectorAll('.nav-btn').forEach(btn =>
     if (tab === 'bookmarks') { renderArtists([]); viewBookmarks(); }
     if (tab === 'stats')     { renderArtists([]); viewStats(); }
     if (tab === 'tapes')     { renderArtists([]); viewTapes(); }
+    if (tab === 'search') {
+      // Advanced Search is Relisten-side only — Nugs artists don't have
+      // setlist.fm MBIDs reliably. Force the source to relisten if needed.
+      if (sidebarSource !== 'relisten') {
+        document.querySelector('.source-tab[data-source="relisten"]')?.click();
+      }
+      renderArtists(state.artists);
+      import('./views-search.js').then(m => m.viewAdvancedSearch());
+    }
   }));
 
 /* ── Settings button — see init() for listener registration ── */
