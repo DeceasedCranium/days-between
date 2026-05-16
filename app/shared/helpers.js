@@ -524,6 +524,85 @@ export function formatAffinityReason({ name, signals } = {}) {
   }
 }
 
+/* ── Relisten source classification (v2.1 source picker) ─────────────────────
+ *
+ * Tape traders care about SBD vs AUD vs MTX vs FM in a way the v1.x source
+ * picker didn't reflect — every audience-style recording was labelled
+ * "🎧 Audience N" even when the source was actually a Matrix. The Relisten
+ * API ships two reliable signals:
+ *
+ *   1. `source` — free-text string the taper or transferrer wrote. Common
+ *      values: "Soundboard", "SBD", "AUD", "Matrix (see notes)", "FM
+ *      broadcast", "Master cassette". Highly inconsistent capitalisation
+ *      and wording, but reliably contains a recognisable token.
+ *   2. `upstream_identifier` — the archive.org item ID, which follows a
+ *      strong convention like `gd77-05-08.sbd.hicks.4982.sbeok.shnf` —
+ *      `.sbd.` / `.aud.` / `.matrix.` / `.mtx.` / `.fm.` segments classify
+ *      the source unambiguously.
+ *
+ * `is_soundboard` is only used as the safe fallback when nothing else
+ * resolves — it's true for SBDs AND for Matrix recordings that mix in a
+ * board feed, so by itself it conflates two distinct classes that taper
+ * communities treat very differently.
+ *
+ * Returns one of:
+ *   { type: 'SBD' | 'AUD' | 'MTX' | 'FM', label: '…' }
+ *
+ * `MD` ("Master") deliberately isn't a separate classification — a "master"
+ * is the original recording medium of either an SBD or AUD source, so the
+ * token alone doesn't tell us anything meaningful for a quick-scan badge.
+ * "Audience cassette master" should be AUD; "Soundboard master DAT" should
+ * be SBD; bare "Master cassette" with no other qualifier falls through to
+ * AUD (the more common case in circulation).
+ * ────────────────────────────────────────────────────────────────────── */
+export function classifySource(source) {
+  if (!source) return { type: 'AUD', label: 'Audience' };
+
+  const src = (source.source ?? '').toLowerCase();
+  const up  = (source.upstream_identifier ?? '').toLowerCase();
+  const has = (re) => re.test(src) || re.test(up);
+
+  // Order matters: matrix BEFORE soundboard (matrices often contain "sbd"
+  // in the description too); audience BEFORE soundboard handling so that
+  // "audience master" reads as AUD rather than getting caught by a board
+  // qualifier elsewhere in the same string.
+  if (has(/\bmatrix\b|\bmtx\b|\.mtx\.|\.matrix\./))    return { type: 'MTX', label: 'Matrix' };
+  if (has(/\bfm\b|\.fm\.|broadcast/))                  return { type: 'FM',  label: 'FM broadcast' };
+  if (has(/\baud\b|audience|\.aud\./))                 return { type: 'AUD', label: 'Audience' };
+  if (has(/\bsbd\b|soundboard|\.sbd\./))               return { type: 'SBD', label: 'Soundboard' };
+
+  // No textual signal — fall back to the boolean flag.
+  if (source.is_soundboard) return { type: 'SBD', label: 'Soundboard' };
+  return { type: 'AUD', label: 'Audience' };
+}
+
+/** Pick a human-friendly taper label for the source chip. Returns null when
+ *  the field is empty, boilerplate ("See info file"), or "Unknown" — these
+ *  add no value to a chip and just take space. Truncates long entries. */
+export function formatTaperLabel(source) {
+  const raw = (source?.taper ?? '').trim();
+  if (!raw) return null;
+  if (/^(see info file|unknown|n\/a|none|various)\b/i.test(raw)) return null;
+  if (raw.length > 40) return raw.slice(0, 37) + '…';
+  return raw;
+}
+
+/** True when the given source is *clearly* the best of the bunch — well-
+ *  rated, well-reviewed, and meaningfully better than the next contender.
+ *  Used to mark the BEST badge on the source picker. Conservative on
+ *  purpose: shows where the top two are within 0.1 of each other don't
+ *  get the badge (it'd just be misleading). */
+export function isBestSource(source, allSources) {
+  if (!source || !Array.isArray(allSources) || allSources.length < 2) return false;
+  const rating  = source.avg_rating ?? 0;
+  const reviews = source.num_reviews ?? source.review_count ?? 0;
+  if (rating < 9 || reviews < 10) return false;
+  const sorted = [...allSources].sort((a, b) => (b.avg_rating ?? 0) - (a.avg_rating ?? 0));
+  if (sorted[0] !== source) return false;
+  const second = sorted[1]?.avg_rating ?? 0;
+  return (rating - second) >= 0.1;
+}
+
 /* ── Semver-ish comparison (update notifier) ──────────────────────────────── */
 
 /** Compare two semver-ish strings (e.g. "1.9.0" vs "1.10.0").

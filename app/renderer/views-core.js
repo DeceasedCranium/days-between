@@ -6,6 +6,7 @@ import { lastfmArtistImage, injectArtistBio, lastfmSimilarArtists } from './last
 import {
   player, queueAndPlay, flatTracks, radioMode, setRadioMode,
   setPlayerArt, showTapePickerForTrack, openCompanion, closeCompanion,
+  audio,
 } from './player.js';
 // Circular-safe: views-nugs imports from views-core, but these are only ever
 // called inside function bodies (event handlers / async calls), never at init.
@@ -18,6 +19,9 @@ import {
   trackContainsSong,
   normaliseSongTitle,
   aggregateRelistenShowsToSongs,
+  classifySource,
+  formatTaperLabel,
+  isBestSource,
 } from '../shared/helpers.js';
 import {
   isAvailable as setlistFmAvailable,
@@ -1902,26 +1906,100 @@ export function renderShow(show, artist) {
     showToast(now ? '📍 Marked as attended!' : 'Attendance removed');
   });
 
-  function renderSourceArea(idx) {
+  // Render one source chip — used for both the default top-6 list and the
+  // "show all" expanded view. Pure formatting, no state mutation.
+  // Horizontal chip: badge + taper + rating in a single compact line. JC
+  // intentionally lives in the metadata block (below, active source only)
+  // rather than on every chip — it adds visual noise when the user is
+  // scanning a row of 6+ chips looking for the SBD or best AUD.
+  function renderSourceChip(s, i, active) {
+    const cls     = classifySource(s);
+    const taper   = formatTaperLabel(s);
+    const reviews = s.num_reviews ?? s.review_count ?? 0;
+    const best    = isBestSource(s, sources);
+    return `
+      <button class="source-chip ${active ? 'active' : ''}" data-sidx="${i}" type="button">
+        <span class="src-badge src-${cls.type}" title="${esc(cls.label)}">${cls.type}</span>
+        <span class="src-taper">${taper ? esc(taper) : '<span class="src-anon">—</span>'}</span>
+        <span class="src-rating">
+          ${s.avg_rating ? `★ ${s.avg_rating.toFixed(2)}` : ''}
+          ${reviews ? `<span class="src-reviews">(${reviews})</span>` : ''}
+        </span>
+        ${best ? '<span class="src-best">BEST</span>' : ''}
+      </button>`;
+  }
+
+  function renderSourceArea(idx, opts = {}) {
     const src = sources[idx]; if (!src) return;
     state.source = src;
     const tracks = flatTracks(src);
 
-    safeInnerHTML($('sourceArea'), `
-      <div class="source-tabs">
-        ${sources.map((s,i)=>`
-          <div class="source-tab ${i===idx?'active':''}" data-sidx="${i}">
-            ${s.is_soundboard?'🎤 Soundboard':`🎧 Audience ${i+1}`}
-            ${s.avg_rating?` · ★${s.avg_rating.toFixed(1)}`:''}
-          </div>`).join('')}
-      </div>
-      ${(src.taper_notes||src.description||src.taper||src.lineage)?`
+    // Persist "expanded" across re-renders within the same show — clicking
+    // a chip in the expanded view shouldn't collapse it back.
+    const expanded = opts.expanded ?? (renderSourceArea._expanded === true);
+    renderSourceArea._expanded = expanded;
+
+    // Sort by rating desc for chip display, so the top sources land first
+    // regardless of API order. Track the original index so the click
+    // handler still picks the right source.
+    const sortedSources = sources
+      .map((s, i) => ({ s, i }))
+      .sort((a, b) => (b.s.avg_rating ?? 0) - (a.s.avg_rating ?? 0));
+    const visible = expanded ? sortedSources : sortedSources.slice(0, 6);
+    const hidden  = sortedSources.length - visible.length;
+
+    // Upgraded metadata block — shows the active source's full provenance.
+    // Includes the archive.org link (clickable to view the item upstream)
+    // and a duration/track-count summary which is useful because sources
+    // sometimes split sets differently from one another.
+    const meta = (() => {
+      const cls = classifySource(src);
+      const dur = src.duration ? `${Math.floor(src.duration/3600)}:${String(Math.floor((src.duration%3600)/60)).padStart(2,'0')}:${String(Math.floor(src.duration%60)).padStart(2,'0')}` : null;
+      const numTracks = (src.sets ?? []).reduce((n, s) => n + (s.tracks?.length ?? 0), 0);
+      const numSets   = (src.sets ?? []).length;
+      const upstream  = src.upstream_identifier;
+      const upstreamUrl = upstream ? `https://archive.org/details/${encodeURIComponent(upstream)}` : null;
+      const reviews   = src.num_reviews ?? src.review_count ?? 0;
+
+      return `
         <div class="source-meta">
-          ${src.taper       ?`<strong>Taper:</strong> ${esc(src.taper)}<br>`:''}
-          ${src.lineage     ?`<strong>Lineage:</strong> ${esc(src.lineage)}<br>`:''}
-          ${src.taper_notes ?`<strong>Notes:</strong> ${esc(src.taper_notes)}<br>`:''}
-          ${src.description ?`<strong>Info:</strong> ${esc(src.description)}`:''}
-        </div>`:''}
+          <div class="source-meta-header">
+            <span class="src-badge src-${cls.type}">${cls.type}</span>
+            <span class="source-meta-source-label">${esc(src.source || cls.label)}</span>
+          </div>
+          <div class="source-meta-grid">
+            ${src.taper      ? `<div><span class="meta-k">Taper</span>${esc(src.taper)}</div>` : ''}
+            ${src.transferrer? `<div><span class="meta-k">Transferrer</span>${esc(src.transferrer)}</div>` : ''}
+            ${src.lineage    ? `<div><span class="meta-k">Lineage</span>${esc(src.lineage)}</div>` : ''}
+            ${dur            ? `<div><span class="meta-k">Duration</span>${dur} · ${numTracks} tracks${numSets > 1 ? ` · ${numSets} sets` : ''}</div>` : ''}
+            ${reviews        ? `<div><span class="meta-k">Reviews</span>${reviews} · ★ ${src.avg_rating?.toFixed(2) ?? '—'}</div>` : ''}
+            ${src.has_jamcharts ? `<div><span class="meta-k">Annotations</span>📊 Has Jam Charts</div>` : ''}
+            ${src.taper_notes? `<div class="meta-wide"><span class="meta-k">Notes</span>${esc(src.taper_notes)}</div>` : ''}
+            ${src.description && !src.taper_notes ? `<div class="meta-wide"><span class="meta-k">Info</span>${esc(src.description)}</div>` : ''}
+            ${upstreamUrl    ? `<div class="meta-wide"><span class="meta-k">Archive</span><a class="meta-archive-link" data-href="${esc(upstreamUrl)}">${esc(upstream)} ↗</a></div>` : ''}
+          </div>
+        </div>`;
+    })();
+
+    safeInnerHTML($('sourceArea'), `
+      <div class="source-picker">
+        <div class="source-picker-header">
+          <span class="source-picker-count">${sources.length} source${sources.length===1?'':'s'} for this show</span>
+          ${sources.length > 1 ? `<span class="source-picker-hint">— click any to switch</span>` : ''}
+        </div>
+        <div class="source-chips">
+          ${visible.map(({s, i}) => renderSourceChip(s, i, i === idx)).join('')}
+        </div>
+        ${hidden > 0 ? `
+          <button class="source-expand" type="button" data-action="expand">
+            Show ${hidden} more source${hidden===1?'':'s'} ▾
+          </button>` : ''}
+        ${expanded && sources.length > 6 ? `
+          <button class="source-expand" type="button" data-action="collapse">
+            Show fewer ▴
+          </button>` : ''}
+      </div>
+      ${meta}
       <div id="trackList">
         ${(src.sets??[]).map((set,si)=>`
           ${set.name?`<div class="set-label">${esc(set.name)}</div>`
@@ -1942,10 +2020,30 @@ export function renderShow(show, artist) {
       if (el) { el.classList.add('playing'); el.querySelector('.track-num').textContent = '▶'; }
     }
 
-    $('sourceArea').querySelectorAll('.source-tab').forEach(tab =>
-      tab.addEventListener('click', () => {
+    $('sourceArea').querySelectorAll('.source-chip').forEach(chip =>
+      chip.addEventListener('click', () => {
         closeCompanion();
-        renderSourceArea(parseInt(tab.dataset.sidx));
+        // Pause playback when switching sources — the currently playing
+        // track is from the OLD source and its track list / file URL no
+        // longer correspond to what the user is about to see. Pausing
+        // surfaces the switch clearly rather than leaving the previous
+        // source quietly streaming in the background.
+        if (state.source !== sources[parseInt(chip.dataset.sidx)]) {
+          try { audio?.pause(); } catch { /* no audio element yet */ }
+        }
+        renderSourceArea(parseInt(chip.dataset.sidx));
+      }));
+
+    $('sourceArea').querySelectorAll('.source-expand').forEach(btn =>
+      btn.addEventListener('click', () => {
+        renderSourceArea(idx, { expanded: btn.dataset.action === 'expand' });
+      }));
+
+    $('sourceArea').querySelectorAll('.meta-archive-link').forEach(a =>
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        const href = a.dataset.href;
+        if (href) window.ipc?.openUrl(href);
       }));
 
     $('sourceArea').querySelectorAll('.track-row').forEach(row =>

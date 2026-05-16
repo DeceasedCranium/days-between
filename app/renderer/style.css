@@ -727,36 +727,127 @@ body {
 .show-actions { display: flex; gap: 8px; }
 
 /* ── Source tabs ───────────────────────────────── */
-.source-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
+/* ── Source picker (v2.1) ────────────────────────────────────────────────
+ * Replaces the older `.source-tabs` / `.source-tab` chips with a richer
+ * row-style picker showing source-type badge (SBD/AUD/MTX/FM), taper
+ * name when known, rating + review count, and BEST / JC badges.
+ * ───────────────────────────────────────────────────────────────────── */
+.source-picker { margin-bottom: 14px; }
+.source-picker-header {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 11px; color: var(--text3);
+  margin-bottom: 8px;
+  text-transform: uppercase; letter-spacing: 0.05em;
 }
-.source-tab {
-  padding: 8px 14px;
+.source-picker-count { font-weight: 700; color: var(--text2); }
+.source-picker-hint  { font-weight: 500; text-transform: none; letter-spacing: 0; }
+
+/* Chips wrap horizontally — 6 sources usually fit in 1-2 rows. Each chip
+   carries the at-a-glance trio: type badge + taper name + rating. Anything
+   richer (JC, full notes, archive link) lives in the metadata block below
+   for the active source only, so we're not duplicating dense info on
+   every chip and wasting vertical space. */
+.source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.source-chip {
+  display: inline-flex;
+  align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg3);
   border: 1px solid var(--border);
   border-radius: 8px;
-  cursor: pointer;
-  background: var(--bg3);
   color: var(--text2);
-  font-size: 12px;
-  font-weight: 600;
-  transition: all 0.12s;
+  font: inherit; font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  max-width: 320px;
 }
-.source-tab:hover  { border-color: var(--accent); color: var(--text); }
-.source-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.source-chip:hover  { background: var(--bg4); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.source-chip.active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg3));
+  border-color: var(--accent);
+  color: var(--text);
+}
 
+/* Source-type badge — color-coded for instant SBD/AUD/MTX/FM scanning. */
+.src-badge {
+  display: inline-block; min-width: 38px;
+  text-align: center;
+  font-size: 10px; font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.src-SBD { background: #2e8b57; }   /* green — board */
+.src-AUD { background: #c08a3a; }   /* amber — audience */
+.src-MTX { background: #6b5bd6; }   /* purple — matrix */
+.src-FM  { background: #c4548a; }   /* pink — broadcast */
+
+.src-taper        { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
+.src-anon         { color: var(--text3); font-style: italic; }
+.src-rating       { font-size: 11px; color: var(--text2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.src-reviews      { color: var(--text3); margin-left: 2px; }
+/* JC and BEST: smaller in the horizontal layout — they're optional flair
+   on a chip that already has type + taper + rating doing the heavy lifting. */
+.src-jc           { font-size: 9px; font-weight: 700; color: var(--accent); }
+.src-best {
+  font-size: 9px; font-weight: 800; letter-spacing: 0.05em;
+  background: var(--accent); color: #fff;
+  padding: 1px 5px; border-radius: 999px;
+}
+
+.source-expand {
+  display: block;
+  margin-top: 6px;
+  background: transparent; border: 0;
+  color: var(--text3); font-size: 11px; font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.source-expand:hover { color: var(--accent); }
+
+/* Upgraded metadata block — shows the active source's provenance in a
+   2-column grid so taper / lineage / duration / reviews stay scannable. */
 .source-meta {
   background: var(--bg4);
   border-radius: 8px;
   padding: 12px 14px;
   font-size: 12px;
-  color: var(--text3);
-  line-height: 1.7;
-  margin-bottom: 14px;
+  color: var(--text2);
+  margin: 10px 0 14px;
 }
-.source-meta strong { color: var(--text2); }
+.source-meta-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.source-meta-source-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.source-meta-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 6px 24px;
+  line-height: 1.5;
+}
+.source-meta-grid .meta-wide { grid-column: 1 / -1; }
+.source-meta-grid .meta-k {
+  display: inline-block;
+  min-width: 75px;
+  color: var(--text3); font-size: 10px;
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  margin-right: 8px;
+}
+.meta-archive-link {
+  color: var(--accent); cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; text-decoration: none;
+}
+.meta-archive-link:hover { text-decoration: underline; }
 
 /* ── Track list ────────────────────────────────── */
 .set-label {

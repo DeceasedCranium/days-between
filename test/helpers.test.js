@@ -35,6 +35,9 @@ import {
   aggregateSongCountsFromSetlists,
   computeArtistAffinities,
   formatAffinityReason,
+  classifySource,
+  formatTaperLabel,
+  isBestSource,
 } from '../app/shared/helpers.js';
 
 
@@ -722,4 +725,148 @@ test('formatAffinityReason picks pinned when it dominates', () => {
     formatAffinityReason({ name: 'Phish', signals: { attended: 0, plays: 8, pinned: 1, favShows: 0 } }),
     'Pinned: Phish'
   );
+});
+
+/* ── classifySource ─────────────────────────────────────────────────────────
+ * Real-world examples drawn from probing the Relisten API on Cornell '77
+ * (gd1977-05-08) and other Dead/Phish shows. Each test pins one of the
+ * recognition paths the function uses. */
+
+test('classifySource recognises Matrix from the source free-text field', () => {
+  const s = { source: 'Matrix (see notes)', is_soundboard: true };
+  assert.equal(classifySource(s).type, 'MTX');
+});
+
+test('classifySource recognises Matrix from the upstream_identifier path', () => {
+  const s = { source: '', upstream_identifier: 'gd77-05-08.matrix.foo.shnf' };
+  assert.equal(classifySource(s).type, 'MTX');
+});
+
+test('classifySource recognises SBD via .sbd. in upstream_identifier', () => {
+  const s = { source: '', upstream_identifier: 'gd77-05-08.sbd.hicks.4982.sbeok.shnf' };
+  assert.equal(classifySource(s).type, 'SBD');
+});
+
+test('classifySource recognises AUD via the source field', () => {
+  const s = { source: 'Audience cassette master', is_soundboard: false };
+  assert.equal(classifySource(s).type, 'AUD');
+});
+
+test('classifySource recognises FM broadcasts', () => {
+  const s = { source: 'FM broadcast — WMUR', is_soundboard: false };
+  assert.equal(classifySource(s).type, 'FM');
+});
+
+test('classifySource: bare "Master cassette" falls through to AUD', () => {
+  // "Master" alone doesn't classify — it just means the original medium.
+  // Most masters in circulation are audience masters; the AUD default is
+  // the right call when there's no other qualifier.
+  const s = { source: 'Master cassette', is_soundboard: false };
+  assert.equal(classifySource(s).type, 'AUD');
+});
+
+test('classifySource: "Audience master" wins on AUD, not MD', () => {
+  // Regression test for the v2.1 first draft where `\bmaster\b` was
+  // checked before `\baudience\b`, causing this to misclassify as MD.
+  const s = { source: 'Audience cassette master', is_soundboard: false };
+  assert.equal(classifySource(s).type, 'AUD');
+});
+
+test('classifySource falls back to is_soundboard when text is empty', () => {
+  assert.equal(classifySource({ source: '', is_soundboard: true  }).type, 'SBD');
+  assert.equal(classifySource({ source: '', is_soundboard: false }).type, 'AUD');
+});
+
+test('classifySource defaults to AUD for null / undefined input', () => {
+  assert.equal(classifySource(null).type, 'AUD');
+  assert.equal(classifySource(undefined).type, 'AUD');
+  assert.equal(classifySource({}).type, 'AUD');
+});
+
+test('classifySource: Matrix wins over SBD when both tokens are present', () => {
+  // Matrix recordings often mention SBD in their description (since one
+  // input feed is usually a board mix). The function must prefer MTX.
+  const s = { source: 'Matrix of SBD + AUD', is_soundboard: true };
+  assert.equal(classifySource(s).type, 'MTX');
+});
+
+
+/* ── formatTaperLabel ───────────────────────────────────────────────────── */
+
+test('formatTaperLabel returns trimmed taper name when present', () => {
+  assert.equal(formatTaperLabel({ taper: '  Charlie Miller  ' }), 'Charlie Miller');
+});
+
+test('formatTaperLabel returns null for empty / missing values', () => {
+  assert.equal(formatTaperLabel({}), null);
+  assert.equal(formatTaperLabel({ taper: '' }), null);
+  assert.equal(formatTaperLabel({ taper: '   ' }), null);
+  assert.equal(formatTaperLabel(null), null);
+});
+
+test('formatTaperLabel filters out boilerplate values', () => {
+  assert.equal(formatTaperLabel({ taper: 'See info file' }),         null);
+  assert.equal(formatTaperLabel({ taper: 'Unknown' }),               null);
+  assert.equal(formatTaperLabel({ taper: 'n/a' }),                   null);
+  assert.equal(formatTaperLabel({ taper: 'None' }),                  null);
+  assert.equal(formatTaperLabel({ taper: 'see info file (notes)' }), null);
+});
+
+test('formatTaperLabel truncates long entries with an ellipsis', () => {
+  const long = 'Recording by Jim Smith with assistance from John Doe at the venue';
+  const out  = formatTaperLabel({ taper: long });
+  assert.ok(out.length <= 40);
+  assert.ok(out.endsWith('…'));
+});
+
+
+/* ── isBestSource ───────────────────────────────────────────────────────── */
+
+test('isBestSource flags the clear top source when gap is meaningful', () => {
+  const sources = [
+    { uuid: 'A', avg_rating: 9.6, num_reviews: 50 },
+    { uuid: 'B', avg_rating: 9.2, num_reviews: 30 },
+    { uuid: 'C', avg_rating: 8.0, num_reviews: 10 },
+  ];
+  assert.equal(isBestSource(sources[0], sources), true);
+  assert.equal(isBestSource(sources[1], sources), false);
+});
+
+test('isBestSource refuses when top two are within 0.1 of each other', () => {
+  const sources = [
+    { avg_rating: 9.50, num_reviews: 50 },
+    { avg_rating: 9.45, num_reviews: 30 },
+  ];
+  assert.equal(isBestSource(sources[0], sources), false);
+});
+
+test('isBestSource requires a minimum number of reviews to be confident', () => {
+  // 10.0 rating but only 2 reviews is not authoritative.
+  const sources = [
+    { avg_rating: 10.0, num_reviews: 2 },
+    { avg_rating: 9.0,  num_reviews: 30 },
+  ];
+  assert.equal(isBestSource(sources[0], sources), false);
+});
+
+test('isBestSource requires rating ≥ 9', () => {
+  const sources = [
+    { avg_rating: 8.5, num_reviews: 50 },
+    { avg_rating: 8.0, num_reviews: 30 },
+  ];
+  assert.equal(isBestSource(sources[0], sources), false);
+});
+
+test('isBestSource accepts review_count as a synonym for num_reviews', () => {
+  // Some Relisten payloads use `review_count` instead of `num_reviews`.
+  const sources = [
+    { avg_rating: 9.6, review_count: 50 },
+    { avg_rating: 9.0, review_count: 30 },
+  ];
+  assert.equal(isBestSource(sources[0], sources), true);
+});
+
+test('isBestSource returns false for single-source shows', () => {
+  const sources = [{ avg_rating: 10, num_reviews: 100 }];
+  assert.equal(isBestSource(sources[0], sources), false);
 });
