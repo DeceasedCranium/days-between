@@ -25,4 +25,9 @@ contextBridge.exposeInMainWorld('ipc', {
   lfmScrobble:  (p)                       => ipcRenderer.invoke('lastfm:scrobble', p),
   downloadTrack:(payload)                 => ipcRenderer.invoke('download-track', payload),
   appVersion:   ()                        => ipcRenderer.invoke('app:get-version'),
+  // Download-folder management (Settings → Data → Downloads folder)
+  getDownloadDir:    ()                   => ipcRenderer.invoke('app:get-download-dir'),
+  pickDownloadDir:   ()                   => ipcRenderer.invoke('app:pick-download-dir'),
+  resetDownloadDir:  ()                   => ipcRenderer.invoke('app:reset-download-dir'),
+  revealDownloadDir: ()                   => ipcRenderer.invoke('app:reveal-download-dir'),
 });

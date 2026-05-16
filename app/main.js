@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut, Notification,
-  session,
+  session, dialog, shell,
 } = require('electron');
 const path = require('path');
 const fs   = require('fs');
@@ -8,15 +8,64 @@ const { pipeline } = require('node:stream/promises');
 const cast = require('./cast');
 const { initNugsScraper, destroyGhostOnQuit } = require('./nugs-scraper');
 
-// Local archival download directory — resolved LAZILY on the first
-// `download-track` call. Eagerly creating it inside `app.whenReady()` was a
-// race against the rest of the boot sequence: if any handler fired before
-// the mkdir resolved, downloads silently failed with "directory not
-// initialized". Pull-on-demand sidesteps the race entirely.
+/* ── Local archival download directory ──────────────────────────────────────
+ *
+ * Default location:
+ *   macOS  → ~/Music/Days Between
+ *   Linux  → ~/Music/Days Between (or $XDG_MUSIC_DIR/Days Between)
+ *   Win    → C:\Users\<User>\Music\Days Between
+ *
+ * Users can pick a different folder via Settings → Data → Downloads folder.
+ * The override path is persisted in <userData>/download-config.json so it
+ * survives app updates. If the configured path goes missing (removable drive
+ * unplugged, network share offline) we silently fall back to the default
+ * after logging a warning.
+ *
+ * Resolved LAZILY on each download-track call so a midstream config change
+ * is picked up without a relaunch.
+ * ────────────────────────────────────────────────────────────────────── */
+function defaultDownloadDir() {
+  return path.join(app.getPath('music'), 'Days Between');
+}
+function downloadConfigPath() {
+  return path.join(app.getPath('userData'), 'download-config.json');
+}
+function readConfiguredDownloadDir() {
+  try {
+    const raw = fs.readFileSync(downloadConfigPath(), 'utf8');
+    const cfg = JSON.parse(raw);
+    return typeof cfg?.path === 'string' && cfg.path ? cfg.path : null;
+  } catch { return null; }
+}
+function writeConfiguredDownloadDir(p) {
+  try {
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.writeFileSync(downloadConfigPath(), JSON.stringify({ path: p }, null, 2));
+    return true;
+  } catch (err) {
+    console.error('[download-dir] persist failed:', err);
+    return false;
+  }
+}
+
 function getDownloadDir() {
-  const dir = path.join(app.getPath('music'), 'Days Between');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
+  const configured = readConfiguredDownloadDir();
+  if (configured) {
+    try {
+      // Ensure the configured path is usable. mkdir is idempotent; if the
+      // user picked a drive that's no longer mounted, this throws and we
+      // fall through to the default.
+      fs.mkdirSync(configured, { recursive: true });
+      // Verify writability — readonly mounts shouldn't be the active dir.
+      fs.accessSync(configured, fs.constants.W_OK);
+      return configured;
+    } catch (err) {
+      console.warn('[download-dir] configured path unusable, falling back to default:', configured, '—', err.message);
+    }
+  }
+  const def = defaultDownloadDir();
+  if (!fs.existsSync(def)) fs.mkdirSync(def, { recursive: true });
+  return def;
 }
 
 // Must be called before app.whenReady() — enables Chromium's built-in
@@ -306,6 +355,50 @@ ipcMain.on('player-update', (_, { title }) => {
 
 // ── App version (used by the in-app update notifier) ───────────────────────
 ipcMain.handle('app:get-version', () => app.getVersion());
+
+/* ── Download-folder IPC ──────────────────────────────────────────────
+ * Renderer reads/changes the archival download root through these.
+ * Main is the source of truth (it does the actual writes on download),
+ * so the renderer never touches the config file directly.
+ * ─────────────────────────────────────────────────────────────────── */
+ipcMain.handle('app:get-download-dir', () => ({
+  resolved:    getDownloadDir(),
+  configured:  readConfiguredDownloadDir(),
+  defaultPath: defaultDownloadDir(),
+}));
+
+ipcMain.handle('app:pick-download-dir', async () => {
+  const res = await dialog.showOpenDialog(win, {
+    title:      'Choose downloads folder',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: getDownloadDir(),
+  });
+  if (res.canceled || !res.filePaths?.length) return { ok: false, cancelled: true };
+  const picked = res.filePaths[0];
+  // Validate writability before persisting — better to refuse upfront
+  // than to fail on the first download attempt.
+  try {
+    fs.mkdirSync(picked, { recursive: true });
+    fs.accessSync(picked, fs.constants.W_OK);
+  } catch (err) {
+    return { ok: false, error: `Folder isn't writable: ${err.message}` };
+  }
+  if (!writeConfiguredDownloadDir(picked)) {
+    return { ok: false, error: 'Could not save the choice — see DevTools console.' };
+  }
+  return { ok: true, path: picked };
+});
+
+ipcMain.handle('app:reset-download-dir', () => {
+  try { fs.unlinkSync(downloadConfigPath()); } catch { /* no config — already default */ }
+  return { ok: true, path: defaultDownloadDir() };
+});
+
+ipcMain.handle('app:reveal-download-dir', () => {
+  const dir = getDownloadDir();
+  shell.openPath(dir).catch(err => console.warn('[reveal] openPath failed:', err));
+  return { ok: true };
+});
 
 // ── Shell ─────────────────────────────────────────────────────────────────
 ipcMain.on('open-url', (_, url) => {

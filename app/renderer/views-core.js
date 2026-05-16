@@ -6,7 +6,6 @@ import { lastfmArtistImage, injectArtistBio, lastfmSimilarArtists } from './last
 import {
   player, queueAndPlay, flatTracks, radioMode, setRadioMode,
   setPlayerArt, showTapePickerForTrack, openCompanion, closeCompanion,
-  audio,
 } from './player.js';
 // Circular-safe: views-nugs imports from views-core, but these are only ever
 // called inside function bodies (event handlers / async calls), never at init.
@@ -2024,14 +2023,12 @@ export function renderShow(show, artist) {
     $('sourceArea').querySelectorAll('.source-chip').forEach(chip =>
       chip.addEventListener('click', () => {
         closeCompanion();
-        // Pause playback when switching sources — the currently playing
-        // track is from the OLD source and its track list / file URL no
-        // longer correspond to what the user is about to see. Pausing
-        // surfaces the switch clearly rather than leaving the previous
-        // source quietly streaming in the background.
-        if (state.source !== sources[parseInt(chip.dataset.sidx)]) {
-          try { audio?.pause(); } catch { /* no audio element yet */ }
-        }
+        // Switching sources just re-renders the track list and metadata —
+        // playback intentionally keeps going. v2.2.0 paused on switch to
+        // "surface" the change, but that punished the common "I just want
+        // to see who taped this" browse behaviour mid-show. If the user
+        // then clicks a track in the new source's list, the normal play
+        // path takes over and replaces the current track cleanly.
         renderSourceArea(parseInt(chip.dataset.sidx));
       }));
 

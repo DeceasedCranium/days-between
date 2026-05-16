@@ -5288,3 +5288,27 @@ html, body {
   background: var(--bg3);
   border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
 }
+
+/* Downloads folder Settings row */
+.settings-row-stack {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.download-dir-path {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text2);
+  word-break: break-all;
+}
+.download-dir-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}

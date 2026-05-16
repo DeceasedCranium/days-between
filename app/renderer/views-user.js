@@ -810,6 +810,21 @@ export function viewSettings() {
 
     <div class="settings-section">
       <div class="settings-section-title">Data</div>
+      <div class="settings-row settings-row-stack">
+        <div class="settings-row-label" style="width:100%">
+          Downloads folder
+          <div class="settings-row-sub">
+            Where ⬇ Download Show writes archived shows.
+            Existing downloads stay where they are when you change this.
+          </div>
+          <div class="download-dir-path" id="downloadDirPath">…</div>
+        </div>
+        <div class="download-dir-actions">
+          <button class="action-btn" id="btnDownloadDirReveal" title="Open in file manager">↗ Open</button>
+          <button class="action-btn" id="btnDownloadDirChange">Change folder…</button>
+          <button class="action-btn" id="btnDownloadDirReset" style="display:none">Reset</button>
+        </div>
+      </div>
       <div class="settings-row">
         <div class="settings-row-label">Export All Data<div class="settings-row-sub">Download your saves, history, and tapes as JSON</div></div>
         <button class="action-btn" id="btnExport">Export</button>
@@ -1105,6 +1120,35 @@ export function viewSettings() {
   }
 
   // ── Data controls ─────────────────────────────────
+  // Downloads folder — populate live and wire change/reset/reveal buttons.
+  const renderDownloadDirRow = async () => {
+    const info = await window.ipc?.getDownloadDir?.();
+    if (!info) return;
+    const pathEl  = $('downloadDirPath');
+    const resetEl = $('btnDownloadDirReset');
+    if (pathEl)  pathEl.textContent = info.resolved;
+    // "Reset" only meaningful when a non-default path is configured.
+    if (resetEl) resetEl.style.display = (info.configured && info.configured !== info.defaultPath) ? '' : 'none';
+  };
+  renderDownloadDirRow();
+
+  $('btnDownloadDirChange')?.addEventListener('click', async () => {
+    const res = await window.ipc?.pickDownloadDir?.();
+    if (!res) return;
+    if (res.cancelled) return;                       // user hit Cancel
+    if (!res.ok)        { showToast(res.error || 'Could not change downloads folder'); return; }
+    showToast('Downloads folder updated. Future downloads go to the new location.');
+    renderDownloadDirRow();
+  });
+  $('btnDownloadDirReset')?.addEventListener('click', async () => {
+    await window.ipc?.resetDownloadDir?.();
+    showToast('Reset to default downloads folder.');
+    renderDownloadDirRow();
+  });
+  $('btnDownloadDirReveal')?.addEventListener('click', () => {
+    window.ipc?.revealDownloadDir?.();
+  });
+
   $('btnExport').addEventListener('click', exportData);
   $('btnImport').addEventListener('click', () => $('importFile').click());
   $('importFile').addEventListener('change', e => {

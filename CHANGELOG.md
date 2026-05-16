@@ -3,6 +3,44 @@
 Per-release notes for Days Between, newest first. The README's
 [Version History](./README.md#version-history) section links here.
 
+## v2.2.2 — Configurable downloads folder + source-switch no-pause
+
+Two tweaks driven by user feedback.
+
+**Configurable downloads folder.** Settings → Data now has a Downloads
+folder row showing the current path, with three actions:
+- ↗ Open — reveals the folder in the OS file manager (Finder /
+  Explorer / Nautilus)
+- Change folder… — opens a native folder picker; choice is persisted
+  to `<userData>/download-config.json`, validated for writability
+  before saving
+- Reset — only appears when a non-default path is configured, clears
+  the override
+
+Defaults stay exactly as before:
+- macOS: `~/Music/Days Between/`
+- Linux: `~/Music/Days Between/` (or `$XDG_MUSIC_DIR/Days Between`)
+- Windows: `C:\Users\<User>\Music\Days Between\`
+
+When changing the folder, existing downloads stay where they are
+(no migration) — the toast notes this. If a previously-configured
+path becomes unavailable on next launch (removable drive unplugged,
+network share offline), `getDownloadDir()` silently falls back to
+the default and logs a warning, so downloads never fail because of
+a stale config.
+
+**Source-switch no longer pauses playback.** v2.2 added a
+"surface-the-switch" auto-pause when clicking between source chips
+on the show page. In practice that punished the common "I just want
+to see who taped this" browse-while-listening pattern. Reverted to
+the historical v1.x behavior: switching sources just re-renders the
+chip metadata and track list; playback continues. Clicking an actual
+track in the new source's list still replaces the current track
+cleanly via the normal play path.
+
+No new tests — both changes are I/O / UI wiring. Existing 130 unit
+tests still pass.
+
 ## v2.2.1 — Nugs sign-in error handling
 
 Bug-fix release prompted by a user report (thanks OddKey2242) — Nugs
