@@ -78,7 +78,24 @@ gap that would have embarrassed us in front of a new user.
   direction: rtl` pattern.
 
 **Distribution:**
-- *(see Phase D commit notes when they land)*
+- electron-builder `build` block fleshed out — explicit `icon: assets/icon.png`
+  for all three platforms (electron-builder generates `.icns` / `.ico` /
+  256-px desktop icons from the source PNG), Linux desktop entry with
+  `GenericName` + `Keywords` so KDE/GNOME launchers index the app, .deb
+  metadata with synopsis + long description, NSIS installer config
+  (custom install dir, preserve user data on uninstall), DMG title with
+  version, `copyright` + `author` + `license: MIT` fields.
+- Source icon regenerated at 1024×1024 (was 256×256) so macOS .icns
+  generation succeeds.
+- Release-notes template in `.github/workflows/release.yml` rewritten —
+  documents the unsigned-binary workarounds for macOS Gatekeeper and
+  Windows SmartScreen explicitly, points at CHANGELOG.md instead of the
+  old README#version-history anchor.
+- macOS / Windows code signing deferred — paid certs aren't worth it
+  for a personal-use project; documented workarounds inline.
+- electron-updater deferred to v2.1. The existing in-app update notifier
+  (polls api.github.com once per launch) handles the "tell users a new
+  version exists" path; one-click auto-install is the v2.1 enhancement.
 
 ## v1.14.0 — Personalized Show of the Day
 

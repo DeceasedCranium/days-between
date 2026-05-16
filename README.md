@@ -157,7 +157,7 @@ Short version: Electron main process owns filesystem / OS / Cast / MPRIS / signi
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the full per-release log going back to v1.0. Recent highlights:
 
-- **v2.0.0** — Distribution release. Polish + stability + identity pass: storage-bug audit, sidebar layout fix, debug-gated console, friendly error messages, About panel, first-run experience, README + screenshots, AppImage as primary Linux artifact, electron-updater integration. No new user-facing features beyond what shipped in v1.x — this is the "ready to share with friends" milestone.
+- **v2.0.0** — Distribution release. Polish + stability + identity pass: storage-bug audit, sidebar layout fix, debug-gated console, friendly error messages, About panel, first-run experience, README + screenshots, AppImage as primary Linux artifact, real installers across macOS / Linux / Windows. No new user-facing features beyond what shipped in v1.x — this is the "ready to share with friends" milestone.
 - **v1.14.0** — Personalized Show of the Day with For You / Global toggle and reason chips.
 - **v1.13.0** — setlist.fm live integration: authoritative per-song play counts.
 - **v1.12.0** — Setlist Intelligence kickoff: Songs tabs, attendance tracking, title dedup.
