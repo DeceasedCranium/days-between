@@ -49,7 +49,12 @@ import { aggregateSongCountsFromSetlists, normaliseSongTitle } from '../shared/h
 
 let API_KEY = '';
 
-const REQUEST_INTERVAL_MS = 600;
+// 850ms gap = ~1.18 req/sec. Documented free-tier ceiling is 2/sec but
+// setlist.fm's gateway throttles tighter in practice for sustained
+// bursts. 850ms keeps Dead-sized scans (1,000+ shows = 50+ pages) below
+// the burst threshold so we hit 429 once or twice at most instead of
+// every fourth page.
+const REQUEST_INTERVAL_MS = 850;
 const SETLIST_API_BASE    = 'https://api.setlist.fm/rest/1.0';
 const SETLIST_TTL_MS      = 7  * 24 * 60 * 60 * 1000;   // 7 days
 const MBID_TTL_MS         = 30 * 24 * 60 * 60 * 1000;   // 30 days
@@ -89,8 +94,17 @@ async function rateLimitedFetch(url, opts = {}) {
   return fetch(url, {
     ...opts,
     headers: {
-      'x-api-key':  API_KEY,
-      'Accept':     'application/json',
+      'x-api-key':       API_KEY,
+      'Accept':          'application/json',
+      // setlist.fm uses Accept-Language for response internationalisation
+      // and started 406-ing on /artist/{mbid}/setlists when it's missing.
+      // Pin to English — track titles and venue names are typically
+      // English-native anyway, and we want stable strings for matching.
+      'Accept-Language': 'en',
+      // setlist.fm gateway occasionally rejects fetches with the default
+      // Electron / Chromium UA. Pinning to a vanilla browser UA matches
+      // what their docs expect from API clients.
+      'User-Agent':      'DaysBetween/2.x (+https://github.com/DeceasedCranium/days-between)',
       ...(opts.headers ?? {}),
     },
   });
@@ -218,7 +232,12 @@ export async function getArtistSongCounts(artist, opts = {}) {
 
   if (!forceRefresh) {
     const cached = await readCache(cacheKey, SETLIST_TTL_MS);
-    if (cached?.counts) {
+    // Pre-v2.2 caches have `counts` but no `setlists` field. Re-fetch so the
+    // cache picks up the normalized setlists Advanced Search needs. This is
+    // a one-time migration cost per artist per user; subsequent reads hit
+    // the upgraded cache and short-circuit normally.
+    const isUpgraded = Array.isArray(cached?.setlists);
+    if (cached?.counts && isUpgraded) {
       // Rehydrate Map from the persisted plain object.
       const map = new Map();
       for (const [k, v] of Object.entries(cached.counts)) map.set(k, v);
