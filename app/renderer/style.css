@@ -5453,3 +5453,119 @@ html, body {
 }
 .nav-btn:hover { transform: translateY(-1px); }
 .nav-btn.active { transform: translateY(0); }
+
+/* ── v2.3 UI revamp Phase 2A — show page hero refresh ───────────────────
+ *
+ * Cinematic upgrade to the existing .show-header. HTML structure is
+ * unchanged — just stronger gradient backdrop, larger art, better
+ * typography hierarchy, refined tag styling. Each rule overrides one
+ * earlier rule so the diff is surgical and revertable.
+ * ────────────────────────────────────────────────────────────────────── */
+
+.show-header {
+  /* Pull further left/right so the hero band reaches the viewport edges,
+     and extend the bottom padding so the gradient transitions feel less
+     abrupt against the source picker below. */
+  margin: -20px -20px 24px;
+  padding: 44px 32px 32px;
+  background:
+    radial-gradient(
+      ellipse at top left,
+      color-mix(in srgb, var(--hero-bg, var(--bg3)) 85%, transparent) 0%,
+      transparent 60%
+    ),
+    linear-gradient(
+      to bottom,
+      var(--hero-bg, var(--bg3)) 0%,
+      color-mix(in srgb, var(--hero-bg, var(--bg3)) 35%, var(--bg)) 55%,
+      var(--bg) 100%
+    );
+  border-bottom: 1px solid color-mix(in srgb, var(--hero-bg, var(--border)) 25%, var(--border));
+}
+.show-header::before {
+  /* The original 0.12-opacity wash boosted to 0.18 for slightly richer
+     tint — still subtle enough not to wash out text. */
+  opacity: 0.18;
+}
+
+/* Bigger art + a richer shadow that visually lifts the card off the
+   gradient. Adds a faint accent ring so even artistColor-driven heroes
+   feel polished. */
+.show-header-wrap {
+  gap: 28px;
+  align-items: center;
+}
+.show-art {
+  width: 200px;
+  height: 200px;
+  border-radius: 14px;
+  box-shadow:
+    0 24px 56px rgba(0, 0, 0, 0.55),
+    0 4px 16px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.show-art .art-init { font-size: 64px; }
+
+/* Larger date heading, tightened spacing on the venue, more breathing
+   room above the personal-row. The original h1 was 28px; bumping to 36px
+   gives the date the cinematic-poster weight it deserves. */
+.show-header h1 {
+  font-size: 36px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.show-venue-full {
+  font-size: 16px;
+  color: var(--text);
+  opacity: 0.92;
+  margin-bottom: 18px;
+}
+.show-tags { gap: 6px; margin-bottom: 20px; }
+
+/* Tags: pill style with a subtle outline, more uniform sizing. */
+.show-header .tag {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--bg3) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text3) 25%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.show-header .tag-green {
+  background: color-mix(in srgb, #2e8b57 30%, transparent);
+  border-color: color-mix(in srgb, #2e8b57 50%, transparent);
+  color: #d8f5e0;
+}
+.show-header .tag-gold {
+  background: color-mix(in srgb, #f5a623 25%, transparent);
+  border-color: color-mix(in srgb, #f5a623 50%, transparent);
+  color: #ffe9b8;
+}
+
+/* Personal row (rating + I Was There) — give it more weight + clearer
+   separation from the action row below. */
+.show-personal-row {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text3) 18%, transparent);
+}
+
+/* Action row — tighten up button spacing and let primary CTA breathe. */
+.show-actions { gap: 8px; flex-wrap: wrap; }
+.show-actions .action-btn.primary {
+  padding: 8px 16px;
+  font-weight: 700;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* Narrow-window guard — when the viewport is tight, fall back to a
+   column layout so the art doesn't crush the info side. */
+@media (max-width: 720px) {
+  .show-header-wrap { flex-direction: column; gap: 18px; align-items: flex-start; }
+  .show-art { width: 140px; height: 140px; }
+  .show-header h1 { font-size: 28px; }
+}
