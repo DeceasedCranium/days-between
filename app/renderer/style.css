@@ -5338,3 +5338,118 @@ html, body {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
+/* ── v2.3 UI revamp Phase 2C — hover & transition polish ─────────────────
+ *
+ * Appended at the bottom of the stylesheet so the originals above stay
+ * intact for easy diff/revert. Each block overrides one specific
+ * interaction with a slightly more present, spring-eased version.
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Show card hover — same direction as before but with slightly more
+   lift, a spring-eased transition, and an accent-tinted shadow that
+   ties the card visually to the artist accent. */
+.show-card {
+  transition: border-color 0.18s cubic-bezier(0.34, 1.4, 0.64, 1),
+              transform    0.22s cubic-bezier(0.34, 1.4, 0.64, 1),
+              box-shadow   0.18s ease;
+}
+.show-card:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.45),
+    0 2px 8px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* Show row (list-mode) — a subtle left-border accent on hover that
+   gives keyboard / mouse users a clearer "this is the active row"
+   signal. Background change retained. */
+.show-row {
+  transition: background 0.14s ease,
+              border-color 0.14s ease,
+              transform 0.14s ease,
+              box-shadow 0.18s ease;
+  border-left: 3px solid transparent;
+  padding-left: 13px;  /* shift padding so the border doesn't reflow content */
+}
+.show-row:hover {
+  border-left-color: var(--accent);
+  transform: translateX(2px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+/* Track row hover — slightly stronger highlight + a faint accent-bar
+   indicator on the left edge. Doesn't move the row (would interfere
+   with rapid click-through). */
+.track-row {
+  transition: background 0.14s ease;
+  position: relative;
+}
+.track-row::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 2px; border-radius: 2px;
+  background: transparent;
+  transition: background 0.14s ease;
+}
+.track-row:hover::before          { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.track-row.playing::before        { background: var(--accent); }
+.track-row:hover                  { background: color-mix(in srgb, var(--accent) 5%, var(--bg3)); }
+
+/* Action buttons — slightly springier hover so they feel responsive,
+   especially on the primary CTA buttons. Originals kept the colour
+   changes; just tweaking the easing + add tiny lift. */
+.action-btn {
+  transition: background 0.14s ease, border-color 0.14s ease,
+              color 0.14s ease, transform 0.16s cubic-bezier(0.34, 1.5, 0.64, 1);
+}
+.action-btn:hover         { transform: translateY(-1px); }
+.action-btn:active        { transform: translateY(0); }
+.action-btn.primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* Source chips — accent-tinted shadow on hover for the active source,
+   syncs with the show-card hover language. */
+.source-chip {
+  transition: background 0.14s ease, border-color 0.14s ease,
+              transform 0.14s cubic-bezier(0.34, 1.4, 0.64, 1),
+              box-shadow 0.14s ease;
+}
+.source-chip:hover  { transform: translateY(-1px); }
+.source-chip.active { box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 20%, transparent); }
+
+/* Focus-visible rings — for keyboard nav. The existing inputs handle
+   focus via border-color; buttons and clickable rows get a real ring. */
+.nav-btn:focus-visible,
+.source-tab:focus-visible,
+.show-card:focus-visible,
+.show-row:focus-visible,
+.track-row:focus-visible,
+.action-btn:focus-visible,
+.source-chip:focus-visible,
+.sotd-pill:focus-visible,
+.adv-result-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
+/* Page-enter — slightly longer fade and a touch more vertical
+   travel so the swap feels intentional, not abrupt. */
+@keyframes vt-slide-in-v2 {
+  from { opacity: 0; transform: translateY(18px) scale(0.992); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+#contentInner.vt-enter,
+#nugsContentInner.vt-enter {
+  animation: 280ms cubic-bezier(0.16, 1, 0.3, 1) both vt-slide-in-v2;
+}
+
+/* Sidebar nav buttons — slight scale-up on hover for tactility
+   (icons reinforce the affordance). Keeps the original colour
+   transitions intact. */
+.nav-btn {
+  transition: background 0.14s ease, border-color 0.14s ease,
+              color 0.14s ease, transform 0.16s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.nav-btn:hover { transform: translateY(-1px); }
+.nav-btn.active { transform: translateY(0); }
