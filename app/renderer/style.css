@@ -5805,3 +5805,208 @@ html, body {
     width: 100%;
   }
 }
+
+/* ── v2.3 UI revamp Phase 2B — welcome page hero ─────────────────────────
+ *
+ * Bigger, more inviting first-impression. HTML unchanged; pure CSS
+ * overrides at the end of the stylesheet. The SOTD card becomes the
+ * visual centerpiece (it's the personalization payoff that earns the
+ * affinity work).
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Subtle accent-tinted backdrop wash at the top of the welcome view.
+   Switched from `justify-content: center` (parent default) to flex-start
+   so content stacks from the top instead of forcing all sections into
+   the viewport. Vertical scroll on overflow; horizontal hidden so the
+   ::before pseudo-element's negative inset can't trigger a scrollbar. */
+.welcome {
+  position: relative;
+  gap: 20px;
+  padding: 24px 16px 32px;
+  justify-content: flex-start;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.welcome::-webkit-scrollbar       { width: 6px; }
+.welcome::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.welcome::before {
+  /* Contain horizontally so the gradient stays inside the .welcome box
+     even with the radial spread, no horizontal overflow. */
+  inset: -40px 0 auto;
+}
+.welcome::before {
+  content: '';
+  position: absolute;
+  inset: -40px -100px auto;
+  height: 280px;
+  background: radial-gradient(
+    ellipse at top,
+    color-mix(in srgb, var(--accent) 12%, transparent) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+.welcome > * { position: relative; z-index: 1; }
+
+/* Logo bumped to 96px so it carries more weight as the visual anchor. */
+.welcome-logo {
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
+  box-shadow: 0 14px 44px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.welcome h2 {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin-bottom: 2px;
+}
+.welcome p {
+  font-size: 14px;
+  max-width: 440px;
+  color: var(--text2);
+  line-height: 1.6;
+}
+
+/* Action buttons: slightly larger, more spacing between them. */
+.welcome-actions {
+  gap: 10px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+.welcome-actions .action-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Show of the Day — the centerpiece. Wider, more padding, accent-tinted
+   gradient backdrop so it reads as a feature card, not a callout. */
+.welcome-sotd {
+  max-width: 720px;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--accent) 10%, var(--bg3)) 0%,
+      color-mix(in srgb, var(--accent) 4%,  var(--bg2)) 100%);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: 16px;
+  padding: 22px 26px;
+  margin-top: 12px;
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.25);
+}
+.welcome-sotd-header {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.welcome-sotd .welcome-otd-title {
+  font-size: 12px;
+  color: var(--text2);
+  letter-spacing: 0.08em;
+}
+
+.sotd-card {
+  text-align: left;
+  transition: transform 0.18s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.sotd-card:hover { transform: translateY(-2px); }
+.sotd-artist {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+.sotd-meta {
+  font-size: 14px;
+  color: var(--text2);
+  margin-bottom: 8px;
+}
+.sotd-rating {
+  font-size: 13px;
+  display: inline-block;
+  padding: 2px 8px;
+  background: color-mix(in srgb, #f5a623 18%, transparent);
+  border-radius: 999px;
+  margin-bottom: 4px;
+}
+.sotd-reason {
+  font-size: 10.5px;
+  padding: 3px 10px;
+  margin-bottom: 10px;
+}
+.sotd-play {
+  margin-top: 12px !important;
+  padding: 8px 18px !important;
+  font-weight: 700 !important;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Welcome card tabs — SOTD ↔ OTD switcher inside the same card.
+   The header used to show a static "🎵 Show of the Day" title; it
+   now hosts two tabs that toggle which content lives in #sotdContent. */
+.welcome-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.welcome-tab {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  border: 0;
+  color: var(--text3);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.14s ease, color 0.14s ease;
+  letter-spacing: 0.02em;
+}
+.welcome-tab:hover  { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.welcome-tab.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+@media (max-width: 720px) {
+  .welcome-tab { font-size: 11px; padding: 5px 10px; }
+}
+
+/* OTD list inside the SOTD card — compact rows, no per-row card
+   styling (the parent card already does that). */
+.otd-list {
+  max-height: 360px;
+  overflow-y: auto;
+  margin-top: 2px;
+}
+.otd-list::-webkit-scrollbar       { width: 5px; }
+.otd-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.otd-show-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 9px 12px !important;
+  margin-bottom: 3px !important;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid transparent;
+  transition: background 0.14s ease, transform 0.14s ease, border-color 0.14s ease;
+  cursor: pointer;
+}
+.otd-show-row:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  transform: translateX(3px);
+}
+.otd-artist { font-weight: 600; color: var(--text); }
+.otd-year   { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 700; }
+.otd-venue  { color: var(--text3); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Listening stats — pull the strip in line width-wise with the SOTD
+   and OTD cards. */
+.welcome-stats { max-width: 720px; width: 100%; }
