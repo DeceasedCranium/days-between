@@ -26,6 +26,7 @@ import {
 import {
   isAvailable as setlistFmAvailable,
   getSongPlayCount,
+  buildSetlistFmSongMap,
 } from './setlistfm.js';
 import { pickPersonalizedSotd, hasEnoughSignal } from './personalization.js';
 
@@ -1852,13 +1853,71 @@ export async function viewShow(artist, date) {
       { label: year,        onClick: () => viewShows(artist, year) },
       { label: show.display_date || date },
     ]);
-    renderShow(show, artist);
+    await renderShow(show, artist);
   } catch(e) { console.error('[views-core] viewShow', e); showError(e.message); }
 }
 
-export function renderShow(show, artist) {
+/* Render Relisten track list HTML, optionally using a setlist.fm-derived
+ * song-to-set map to override the source's set structure.
+ *
+ * Many Relisten sources ship as a single unnamed set (the taper dumped
+ * all tracks into one block — Cornell '77 is the canonical example: a
+ * "Set" with all 20 tracks). When we have setlist.fm data for the date,
+ * we flatten the source's tracks and walk the flat list assigning each
+ * track to whatever set setlist.fm says it belongs to, inserting
+ * <div class="set-label"> headers at set boundaries.
+ *
+ * Without setlist.fm data, we fall back to the source's own sets[] /
+ * set.name structure unchanged. */
+function renderRelistenTrackList(src, songToSet) {
+  const _row = (t, pos) => `
+    <div class="track-row" data-track-uuid="${esc(t.uuid)}" data-track-pos="${pos}">
+      <div class="track-num">${pos}</div>
+      <div class="track-name">${esc(t.title || 'Unknown')}</div>
+      <div class="track-dur">${fmt(t.duration)}</div>
+      <button class="track-stats-btn" data-title="${esc(t.title || '')}" title="Show occurrences">📊</button>
+      <button class="track-add-tape"  data-track-uuid="${esc(t.uuid)}" title="Add to tape">📼</button>
+    </div>`;
+
+  if (songToSet && songToSet.size > 0) {
+    // setlist.fm-driven set structure — flatten and re-walk.
+    const flat = (src.sets ?? []).flatMap(s => (s.tracks ?? []).filter(t => t.mp3_url));
+    const out = [];
+    let currentSet = null;
+    flat.forEach((t, i) => {
+      const key = normaliseSongTitle(t.title || '');
+      const trackSet = songToSet.get(key) ?? null;
+      if (trackSet && trackSet !== currentSet) {
+        out.push(`<div class="set-label">${esc(trackSet)}</div>`);
+        currentSet = trackSet;
+      }
+      out.push(_row(t, i + 1));
+    });
+    return out.join('');
+  }
+
+  // Fallback — Relisten's own sets[] / set.name (single set, multi-set
+  // with names like "Set 1" / "Set 2" / "Encore", etc.).
+  return (src.sets ?? []).map((set, si) => `
+    ${set.name ? `<div class="set-label">${esc(set.name)}</div>`
+      : (src.sets?.length ?? 0) > 1 ? `<div class="set-label">Set ${si+1}</div>` : ''}
+    ${(set.tracks ?? []).filter(t => t.mp3_url).map((t, ti) => _row(t, ti + 1)).join('')}
+  `).join('');
+}
+
+export async function renderShow(show, artist) {
   const sources   = show.sources ?? [];
   const fav       = store.isFav(artist.slug, show.display_date);
+
+  // Cross-reference setlist.fm for set delineation. Many Relisten sources
+  // ship as a single unnamed set ("Set" containing all 20 Cornell '77
+  // tracks, etc.) — setlist.fm has the actual Set 1 / Set 2 / Encore
+  // structure for these shows. Resolves to null on any failure (no cache
+  // for this artist, no matching setlist for the date, setlist.fm key
+  // missing) and the renderer falls back to the per-source set.name
+  // structure unchanged. */
+  const songToSet = await buildSetlistFmSongMap(artist, show.display_date)
+    .catch(() => null);
   const shareUrl  = `https://relisten.net/${artist.slug}/${show.display_date}`;
   const heroColor = artistColor(artist.name);
   const artHtml   = artist.image_url
@@ -2050,18 +2109,7 @@ export function renderShow(show, artist) {
       </div>
       ${meta}
       <div id="trackList">
-        ${(src.sets??[]).map((set,si)=>`
-          ${set.name?`<div class="set-label">${esc(set.name)}</div>`
-            :(src.sets?.length??0)>1?`<div class="set-label">Set ${si+1}</div>`:''}
-          ${(set.tracks??[]).filter(t=>t.mp3_url).map((t,ti)=>`
-            <div class="track-row" data-track-uuid="${esc(t.uuid)}" data-track-pos="${ti+1}">
-              <div class="track-num">${ti+1}</div>
-              <div class="track-name">${esc(t.title||'Unknown')}</div>
-              <div class="track-dur">${fmt(t.duration)}</div>
-              <button class="track-stats-btn" data-title="${esc(t.title||'')}" title="Show occurrences">📊</button>
-              <button class="track-add-tape" data-track-uuid="${esc(t.uuid)}" title="Add to tape">📼</button>
-            </div>`).join('')}
-        `).join('')}
+        ${renderRelistenTrackList(src, songToSet)}
       </div>`);
 
     if (state.queue[state.queueIdx]) {

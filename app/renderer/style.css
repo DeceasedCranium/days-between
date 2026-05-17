@@ -6010,3 +6010,109 @@ html, body {
 /* Listening stats — pull the strip in line width-wise with the SOTD
    and OTD cards. */
 .welcome-stats { max-width: 720px; width: 100%; }
+
+/* ── v2.3 UI revamp wrap-up — artist hero + set labels ───────────────────
+ *
+ * Closes the gap between the show-page hero (Phase 2A) and its sibling,
+ * the artist Years-page hero — they should feel like part of the same
+ * design language. Plus bumps the set labels above each track block so
+ * the structure of a multi-set show reads at a glance.
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Artist hero — mirror the cinematic treatment of .show-header so
+   landing on an artist's Years page feels like part of the same
+   poster-grade visual language. */
+.artist-hero {
+  margin: -20px -20px 24px;
+  padding: 56px 32px 32px;
+  background:
+    radial-gradient(
+      ellipse at top left,
+      color-mix(in srgb, var(--hero-bg, var(--bg3)) 85%, transparent) 0%,
+      transparent 60%
+    ),
+    linear-gradient(
+      to bottom,
+      var(--hero-bg, var(--bg3)) 0%,
+      color-mix(in srgb, var(--hero-bg, var(--bg3)) 35%, var(--bg)) 55%,
+      var(--bg) 100%
+    );
+  border-bottom: 1px solid color-mix(in srgb, var(--hero-bg, var(--border)) 25%, var(--border));
+  gap: 28px;
+  align-items: center;
+}
+.artist-hero::before {
+  /* Drop the original 0.22 single-colour overlay — the new gradient
+     already handles the tint and a second layer just darkens it. */
+  display: none;
+}
+.artist-hero-art {
+  width: 160px;
+  height: 160px;
+  box-shadow:
+    0 24px 56px rgba(0, 0, 0, 0.55),
+    0 4px 16px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.art-hero-init { font-size: 60px; }
+
+.artist-hero-label {
+  font-size: 12px;
+  color: var(--accent2);
+  opacity: 0.9;
+}
+.artist-hero-name {
+  font-size: 48px;
+  font-weight: 900;
+  letter-spacing: -0.015em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  margin-bottom: 10px;
+}
+.artist-hero-meta {
+  font-size: 14px;
+  color: var(--text);
+  opacity: 0.88;
+  margin-bottom: 18px;
+}
+
+/* Narrow-window fallback — stack the art above the info, smaller art. */
+@media (max-width: 720px) {
+  .artist-hero { flex-direction: column; align-items: flex-start; gap: 18px; padding: 36px 22px 24px; }
+  .artist-hero-art { width: 120px; height: 120px; }
+  .art-hero-init { font-size: 44px; }
+  .artist-hero-name { font-size: 32px; }
+}
+
+/* Set labels in track lists — bumped from utilitarian uppercase
+   muted-grey text to a proper chip-like heading so "Set 1" / "Set 2"
+   / "Encore" actually signal structure at a glance on multi-set shows. */
+.set-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  padding: 18px 0 8px;
+  margin: 6px 0 4px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.set-label::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.set-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--accent) 22%, transparent),
+    transparent
+  );
+}
