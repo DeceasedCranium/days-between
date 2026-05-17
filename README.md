@@ -190,7 +190,9 @@ This is an independent personal-use desktop client. It is **not affiliated with,
 - **Nugs.net content** is only accessible to users with an active Nugs.net subscription. The app authenticates using your own credentials and does not bypass, circumvent, or share any paywall.
 - **Relisten content** is served via the public Relisten API and is freely available per that project's terms.
 - All streams are fetched live from the providers' own CDNs.
-- The optional **Local archival** feature saves files to your own machine for personal offline listening only — it does not redistribute, share, or upload anything. Relisten recordings are taper/community sourced and freely distributable per the Relisten terms; Nugs.net downloads remain bound by your subscription's terms of use.
+- The optional **Local archival** feature saves files to your own machine for personal offline listening only — it does not redistribute, share, or upload anything.
+  - **Relisten recordings** are taper / community-sourced and freely distributable per the Relisten and Internet Archive terms; archiving them locally is unambiguous fair use.
+  - **Nugs.net recordings** are different. The Nugs official mobile app supports DRM-locked offline downloads tied to your active subscription; Days Between's archival saves plain audio files that persist beyond the subscription. That's outside what Nugs.net's terms of service permit — saving streamed content to local files generally isn't covered by streaming subscriptions. **The feature is enabled and works, but it is gray-area with respect to Nugs's ToS, and using it is at your own discretion and your own responsibility.** This project does not encourage or condone violating any provider's terms; it simply does not technically prevent you from making a personal-use archive of subscription content you have legitimate access to.
 
 Use of this software is solely your responsibility. Review each service's terms before use.
 
