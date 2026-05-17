@@ -5569,3 +5569,239 @@ html, body {
   .show-art { width: 140px; height: 140px; }
   .show-header h1 { font-size: 28px; }
 }
+
+/* ── v2.3 UI revamp Phase 2 (Now Playing) — cinematic overlay ────────────
+ *
+ * Restructures .npo-inner from a 380px-wide centered column to a wide
+ * two-column grid (art + info on the left, full-height setlist on the
+ * right) at viewports ≥ 880px. Backdrop, art treatment, typography,
+ * and setlist styling all upgraded. HTML / JS unchanged.
+ *
+ * Falls back to the original single-column stack at narrow widths.
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Backdrop — stronger track-color presence, second radial layer for
+   depth, subtle vignette so the centered content has contrast. */
+.npo-bg {
+  background-color: color-mix(in srgb, var(--track-color, var(--bg)) 55%, var(--bg));
+  background-size: cover;
+  background-position: center;
+  filter: blur(80px) brightness(0.55) saturate(1.8);
+  transform: scale(1.15);
+}
+.npo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 25% 30%,
+      color-mix(in srgb, var(--track-color, transparent) 35%, transparent) 0%,
+      transparent 50%),
+    radial-gradient(ellipse at 75% 80%,
+      color-mix(in srgb, var(--accent) 18%, transparent) 0%,
+      transparent 55%),
+    radial-gradient(ellipse at center,
+      transparent 40%,
+      rgba(0, 0, 0, 0.35) 100%);
+  z-index: 0;
+}
+
+/* Two-column inner layout — art + info on the left, setlist on the right.
+   Grid template keeps the JS-populated children unchanged but pins each
+   one to a named area, so future tweaks are positional, not structural. */
+.npo-inner {
+  width: min(1180px, 94vw);
+  max-width: 94vw;
+  padding: 36px 44px 32px;
+  display: grid;
+  grid-template-columns: minmax(420px, 1.05fr) minmax(300px, 380px);
+  grid-template-areas:
+    "art       setlist"
+    "title     setlist"
+    "sub       setlist"
+    "progress  setlist"
+    "controls  setlist"
+    "extras    setlist";
+  gap: 14px 48px;
+  align-items: start;
+}
+
+.npo-art-wrap {
+  grid-area: art;
+  justify-self: start;
+  width: 340px;
+  height: 340px;
+  border-radius: 18px;
+  box-shadow:
+    0 40px 80px rgba(0, 0, 0, 0.65),
+    0 8px 24px color-mix(in srgb, var(--track-color, #000) 45%, transparent),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  position: relative;
+  margin-bottom: 4px;
+}
+/* Soft floor reflection — gives the art a "sitting on a surface" feel. */
+.npo-art-wrap::after {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: -34px;
+  height: 36px;
+  background: color-mix(in srgb, var(--track-color, rgba(255,255,255,0.4)) 55%, transparent);
+  filter: blur(28px);
+  opacity: 0.85;
+  z-index: -1;
+  pointer-events: none;
+}
+.npo-art-wrap .art-init { font-size: 84px; }
+
+/* Title + sub: left-aligned, much larger, with a soft track-color glow
+   on the title so it ties into the backdrop. */
+.npo-title {
+  grid-area: title;
+  text-align: left;
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  margin: 4px 0 0;
+  text-shadow: 0 2px 18px color-mix(in srgb, var(--track-color, transparent) 30%, transparent);
+}
+.npo-sub {
+  grid-area: sub;
+  text-align: left;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text2);
+  margin: 0;
+  opacity: 0.92;
+}
+
+/* Progress bar pinned to the info column width. */
+.npo-progress-wrap {
+  grid-area: progress;
+  margin-top: 10px;
+}
+.npo-bar { background: rgba(255, 255, 255, 0.18); }
+.npo-fill {
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, white));
+}
+
+/* Controls — left-aligned to match the rest of the column, primary
+   play button gets the accent-glow shadow. */
+.npo-controls {
+  grid-area: controls;
+  justify-content: flex-start;
+  gap: 18px;
+  margin-top: 6px;
+}
+.npo-btn-lg {
+  width: 68px;
+  height: 68px;
+  box-shadow: 0 10px 32px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.npo-btn-lg:active { transform: scale(0.94); }
+
+/* Extras row — left-aligned, volume gets more breathing room. */
+.npo-extras {
+  grid-area: extras;
+  justify-content: flex-start;
+  gap: 14px;
+}
+.npo-volume { width: 140px; margin-left: auto; max-width: 30%; }
+
+/* Setlist as a real full-height column. The container fills its grid
+   area; the scrollable region is the rows themselves. Sticky header
+   tells the user what they're looking at. */
+.npo-setlist {
+  grid-area: setlist;
+  max-height: none;
+  height: 100%;
+  min-height: 420px;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+  background: color-mix(in srgb, var(--bg) 30%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 14px 10px;
+}
+.npo-setlist::-webkit-scrollbar       { width: 5px; }
+.npo-setlist::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
+
+.npo-setlist-row {
+  padding: 9px 14px;
+  font-size: 13px;
+  gap: 12px;
+  border-radius: 8px;
+  margin-bottom: 1px;
+}
+.npo-setlist-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+.npo-setlist-row.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.npo-setlist-row.active .npo-setlist-num { color: var(--accent); font-weight: 700; }
+.npo-setlist-num   { width: 24px; font-variant-numeric: tabular-nums; }
+.npo-setlist-title { font-weight: 500; }
+.npo-setlist-dur   {
+  font-size: 11px; color: var(--text3);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.npo-setlist-row.active .npo-setlist-dur { color: color-mix(in srgb, var(--accent) 70%, white); }
+
+/* Close button — bumped to corner-of-overlay, larger touch target.
+   Positioned below the titlebar (z-index 20001 vs npo's 200) so the
+   titlebar doesn't crop the top half of the button.
+   var(--title-h) = 38px, +12px gap = top ≈ 50px. */
+.npo-close {
+  top: calc(var(--title-h) + 12px);
+  right: 24px;
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Narrow-window guard — fall back to single-column stack so the layout
+   doesn't crush below 880px viewport width. Mirrors the v1.x behaviour. */
+@media (max-width: 879px) {
+  .npo-inner {
+    width: 380px;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "art"
+      "title"
+      "sub"
+      "progress"
+      "controls"
+      "extras"
+      "setlist";
+    gap: 14px 0;
+    padding: 24px 20px 28px;
+    justify-items: center;
+  }
+  .npo-art-wrap   { width: 260px; height: 260px; justify-self: center; }
+  .npo-art-wrap::after { display: none; }
+  .npo-title, .npo-sub { text-align: center; }
+  .npo-controls, .npo-extras { justify-content: center; }
+  .npo-volume { margin-left: 0; }
+  .npo-setlist {
+    height: auto;
+    min-height: 0;
+    max-height: 220px;
+    width: 100%;
+  }
+}
