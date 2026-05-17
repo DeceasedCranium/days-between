@@ -255,9 +255,16 @@ body {
   display: flex;
   gap: 3px;
 }
+/* Stacked icon-above-label layout (v2.3 UI revamp Phase 1).
+   The wider .nav-btn surface lets the icon breathe while keeping the
+   2-row horizontal grid that's identity-specific to Days Between. */
 .nav-btn {
   flex: 1;
-  padding: 5px 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 2px 6px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text3);
@@ -277,12 +284,29 @@ body {
   box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 15%, transparent), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 
+/* Icon container — fixed slot above the label. SVG stroke inherits
+   currentColor so it picks up active / hover state automatically. */
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  opacity: 0.85;
+}
+.nav-icon svg { width: 16px; height: 16px; display: block; }
+.nav-btn:hover  .nav-icon { opacity: 1; }
+.nav-btn.active .nav-icon { opacity: 1; }
+.nav-label { display: inline-block; line-height: 1; }
+
 /* Feature row — single full-width button for Advanced Search.
-   Slightly bigger and accent-tinted so it reads as a premium entry point. */
+   Inline layout (icon LEFT of label) instead of stacked, since the
+   button is full-width and the label is longer. */
 .nav-row-feature { margin-top: 4px; }
 .nav-btn-feature {
+  flex-direction: row;
+  gap: 6px;
   font-size: 10.5px;
-  padding: 7px 4px;
+  padding: 7px 8px;
   background: color-mix(in srgb, var(--accent) 6%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--text2);
@@ -292,6 +316,8 @@ body {
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
+.nav-btn-feature .nav-icon     { width: 14px; height: 14px; opacity: 1; }
+.nav-btn-feature .nav-icon svg { width: 14px; height: 14px; }
 
 .artist-list {
   flex: 1;
@@ -5311,4 +5337,782 @@ html, body {
   flex-shrink: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+/* ── v2.3 UI revamp Phase 2C — hover & transition polish ─────────────────
+ *
+ * Appended at the bottom of the stylesheet so the originals above stay
+ * intact for easy diff/revert. Each block overrides one specific
+ * interaction with a slightly more present, spring-eased version.
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Show card hover — same direction as before but with slightly more
+   lift, a spring-eased transition, and an accent-tinted shadow that
+   ties the card visually to the artist accent. */
+.show-card {
+  transition: border-color 0.18s cubic-bezier(0.34, 1.4, 0.64, 1),
+              transform    0.22s cubic-bezier(0.34, 1.4, 0.64, 1),
+              box-shadow   0.18s ease;
+}
+.show-card:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.45),
+    0 2px 8px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* Show row (list-mode) — a subtle left-border accent on hover that
+   gives keyboard / mouse users a clearer "this is the active row"
+   signal. Background change retained. */
+.show-row {
+  transition: background 0.14s ease,
+              border-color 0.14s ease,
+              transform 0.14s ease,
+              box-shadow 0.18s ease;
+  border-left: 3px solid transparent;
+  padding-left: 13px;  /* shift padding so the border doesn't reflow content */
+}
+.show-row:hover {
+  border-left-color: var(--accent);
+  transform: translateX(2px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+/* Track row hover — slightly stronger highlight + a faint accent-bar
+   indicator on the left edge. Doesn't move the row (would interfere
+   with rapid click-through). */
+.track-row {
+  transition: background 0.14s ease;
+  position: relative;
+}
+.track-row::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 2px; border-radius: 2px;
+  background: transparent;
+  transition: background 0.14s ease;
+}
+.track-row:hover::before          { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.track-row.playing::before        { background: var(--accent); }
+.track-row:hover                  { background: color-mix(in srgb, var(--accent) 5%, var(--bg3)); }
+
+/* Action buttons — slightly springier hover so they feel responsive,
+   especially on the primary CTA buttons. Originals kept the colour
+   changes; just tweaking the easing + add tiny lift. */
+.action-btn {
+  transition: background 0.14s ease, border-color 0.14s ease,
+              color 0.14s ease, transform 0.16s cubic-bezier(0.34, 1.5, 0.64, 1);
+}
+.action-btn:hover         { transform: translateY(-1px); }
+.action-btn:active        { transform: translateY(0); }
+.action-btn.primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* Source chips — accent-tinted shadow on hover for the active source,
+   syncs with the show-card hover language. */
+.source-chip {
+  transition: background 0.14s ease, border-color 0.14s ease,
+              transform 0.14s cubic-bezier(0.34, 1.4, 0.64, 1),
+              box-shadow 0.14s ease;
+}
+.source-chip:hover  { transform: translateY(-1px); }
+.source-chip.active { box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 20%, transparent); }
+
+/* Focus-visible rings — for keyboard nav. The existing inputs handle
+   focus via border-color; buttons and clickable rows get a real ring. */
+.nav-btn:focus-visible,
+.source-tab:focus-visible,
+.show-card:focus-visible,
+.show-row:focus-visible,
+.track-row:focus-visible,
+.action-btn:focus-visible,
+.source-chip:focus-visible,
+.sotd-pill:focus-visible,
+.adv-result-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
+/* Page-enter — slightly longer fade and a touch more vertical
+   travel so the swap feels intentional, not abrupt. */
+@keyframes vt-slide-in-v2 {
+  from { opacity: 0; transform: translateY(18px) scale(0.992); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+#contentInner.vt-enter,
+#nugsContentInner.vt-enter {
+  animation: 280ms cubic-bezier(0.16, 1, 0.3, 1) both vt-slide-in-v2;
+}
+
+/* Sidebar nav buttons — slight scale-up on hover for tactility
+   (icons reinforce the affordance). Keeps the original colour
+   transitions intact. */
+.nav-btn {
+  transition: background 0.14s ease, border-color 0.14s ease,
+              color 0.14s ease, transform 0.16s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.nav-btn:hover { transform: translateY(-1px); }
+.nav-btn.active { transform: translateY(0); }
+
+/* ── v2.3 UI revamp Phase 2A — show page hero refresh ───────────────────
+ *
+ * Cinematic upgrade to the existing .show-header. HTML structure is
+ * unchanged — just stronger gradient backdrop, larger art, better
+ * typography hierarchy, refined tag styling. Each rule overrides one
+ * earlier rule so the diff is surgical and revertable.
+ * ────────────────────────────────────────────────────────────────────── */
+
+.show-header {
+  /* Pull further left/right so the hero band reaches the viewport edges,
+     and extend the bottom padding so the gradient transitions feel less
+     abrupt against the source picker below. */
+  margin: -20px -20px 24px;
+  padding: 44px 32px 32px;
+  background:
+    radial-gradient(
+      ellipse at top left,
+      color-mix(in srgb, var(--hero-bg, var(--bg3)) 85%, transparent) 0%,
+      transparent 60%
+    ),
+    linear-gradient(
+      to bottom,
+      var(--hero-bg, var(--bg3)) 0%,
+      color-mix(in srgb, var(--hero-bg, var(--bg3)) 35%, var(--bg)) 55%,
+      var(--bg) 100%
+    );
+  border-bottom: 1px solid color-mix(in srgb, var(--hero-bg, var(--border)) 25%, var(--border));
+}
+.show-header::before {
+  /* The original 0.12-opacity wash boosted to 0.18 for slightly richer
+     tint — still subtle enough not to wash out text. */
+  opacity: 0.18;
+}
+
+/* Bigger art + a richer shadow that visually lifts the card off the
+   gradient. Adds a faint accent ring so even artistColor-driven heroes
+   feel polished. */
+.show-header-wrap {
+  gap: 28px;
+  align-items: center;
+}
+.show-art {
+  width: 200px;
+  height: 200px;
+  border-radius: 14px;
+  box-shadow:
+    0 24px 56px rgba(0, 0, 0, 0.55),
+    0 4px 16px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.show-art .art-init { font-size: 64px; }
+
+/* Larger date heading, tightened spacing on the venue, more breathing
+   room above the personal-row. The original h1 was 28px; bumping to 36px
+   gives the date the cinematic-poster weight it deserves. */
+.show-header h1 {
+  font-size: 36px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.show-venue-full {
+  font-size: 16px;
+  color: var(--text);
+  opacity: 0.92;
+  margin-bottom: 18px;
+}
+.show-tags { gap: 6px; margin-bottom: 20px; }
+
+/* Tags: pill style with a subtle outline, more uniform sizing. */
+.show-header .tag {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--bg3) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text3) 25%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.show-header .tag-green {
+  background: color-mix(in srgb, #2e8b57 30%, transparent);
+  border-color: color-mix(in srgb, #2e8b57 50%, transparent);
+  color: #d8f5e0;
+}
+.show-header .tag-gold {
+  background: color-mix(in srgb, #f5a623 25%, transparent);
+  border-color: color-mix(in srgb, #f5a623 50%, transparent);
+  color: #ffe9b8;
+}
+
+/* Personal row (rating + I Was There) — give it more weight + clearer
+   separation from the action row below. */
+.show-personal-row {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text3) 18%, transparent);
+}
+
+/* Action row — tighten up button spacing and let primary CTA breathe. */
+.show-actions { gap: 8px; flex-wrap: wrap; }
+.show-actions .action-btn.primary {
+  padding: 8px 16px;
+  font-weight: 700;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* Narrow-window guard — when the viewport is tight, fall back to a
+   column layout so the art doesn't crush the info side. */
+@media (max-width: 720px) {
+  .show-header-wrap { flex-direction: column; gap: 18px; align-items: flex-start; }
+  .show-art { width: 140px; height: 140px; }
+  .show-header h1 { font-size: 28px; }
+}
+
+/* ── v2.3 UI revamp Phase 2 (Now Playing) — cinematic overlay ────────────
+ *
+ * Restructures .npo-inner from a 380px-wide centered column to a wide
+ * two-column grid (art + info on the left, full-height setlist on the
+ * right) at viewports ≥ 880px. Backdrop, art treatment, typography,
+ * and setlist styling all upgraded. HTML / JS unchanged.
+ *
+ * Falls back to the original single-column stack at narrow widths.
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Backdrop — stronger track-color presence, second radial layer for
+   depth, subtle vignette so the centered content has contrast. */
+.npo-bg {
+  background-color: color-mix(in srgb, var(--track-color, var(--bg)) 55%, var(--bg));
+  background-size: cover;
+  background-position: center;
+  filter: blur(80px) brightness(0.55) saturate(1.8);
+  transform: scale(1.15);
+}
+.npo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 25% 30%,
+      color-mix(in srgb, var(--track-color, transparent) 35%, transparent) 0%,
+      transparent 50%),
+    radial-gradient(ellipse at 75% 80%,
+      color-mix(in srgb, var(--accent) 18%, transparent) 0%,
+      transparent 55%),
+    radial-gradient(ellipse at center,
+      transparent 40%,
+      rgba(0, 0, 0, 0.35) 100%);
+  z-index: 0;
+}
+
+/* Two-column inner layout — art + info on the left, setlist on the right.
+   Grid template keeps the JS-populated children unchanged but pins each
+   one to a named area, so future tweaks are positional, not structural. */
+.npo-inner {
+  width: min(1180px, 94vw);
+  max-width: 94vw;
+  padding: 36px 44px 32px;
+  display: grid;
+  grid-template-columns: minmax(420px, 1.05fr) minmax(300px, 380px);
+  grid-template-areas:
+    "art       setlist"
+    "title     setlist"
+    "sub       setlist"
+    "progress  setlist"
+    "controls  setlist"
+    "extras    setlist";
+  gap: 14px 48px;
+  align-items: start;
+}
+
+.npo-art-wrap {
+  grid-area: art;
+  justify-self: start;
+  width: 340px;
+  height: 340px;
+  border-radius: 18px;
+  box-shadow:
+    0 40px 80px rgba(0, 0, 0, 0.65),
+    0 8px 24px color-mix(in srgb, var(--track-color, #000) 45%, transparent),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  position: relative;
+  margin-bottom: 4px;
+}
+/* Soft floor reflection — gives the art a "sitting on a surface" feel. */
+.npo-art-wrap::after {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: -34px;
+  height: 36px;
+  background: color-mix(in srgb, var(--track-color, rgba(255,255,255,0.4)) 55%, transparent);
+  filter: blur(28px);
+  opacity: 0.85;
+  z-index: -1;
+  pointer-events: none;
+}
+.npo-art-wrap .art-init { font-size: 84px; }
+
+/* Title + sub: left-aligned, much larger, with a soft track-color glow
+   on the title so it ties into the backdrop. */
+.npo-title {
+  grid-area: title;
+  text-align: left;
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  margin: 4px 0 0;
+  text-shadow: 0 2px 18px color-mix(in srgb, var(--track-color, transparent) 30%, transparent);
+}
+.npo-sub {
+  grid-area: sub;
+  text-align: left;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text2);
+  margin: 0;
+  opacity: 0.92;
+}
+
+/* Progress bar pinned to the info column width. */
+.npo-progress-wrap {
+  grid-area: progress;
+  margin-top: 10px;
+}
+.npo-bar { background: rgba(255, 255, 255, 0.18); }
+.npo-fill {
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, white));
+}
+
+/* Controls — left-aligned to match the rest of the column, primary
+   play button gets the accent-glow shadow. */
+.npo-controls {
+  grid-area: controls;
+  justify-content: flex-start;
+  gap: 18px;
+  margin-top: 6px;
+}
+.npo-btn-lg {
+  width: 68px;
+  height: 68px;
+  box-shadow: 0 10px 32px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.npo-btn-lg:active { transform: scale(0.94); }
+
+/* Extras row — left-aligned, volume gets more breathing room. */
+.npo-extras {
+  grid-area: extras;
+  justify-content: flex-start;
+  gap: 14px;
+}
+.npo-volume { width: 140px; margin-left: auto; max-width: 30%; }
+
+/* Setlist as a real full-height column. The container fills its grid
+   area; the scrollable region is the rows themselves. Sticky header
+   tells the user what they're looking at. */
+.npo-setlist {
+  grid-area: setlist;
+  max-height: none;
+  height: 100%;
+  min-height: 420px;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+  background: color-mix(in srgb, var(--bg) 30%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 14px 10px;
+}
+.npo-setlist::-webkit-scrollbar       { width: 5px; }
+.npo-setlist::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
+
+.npo-setlist-row {
+  padding: 9px 14px;
+  font-size: 13px;
+  gap: 12px;
+  border-radius: 8px;
+  margin-bottom: 1px;
+}
+.npo-setlist-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+.npo-setlist-row.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.npo-setlist-row.active .npo-setlist-num { color: var(--accent); font-weight: 700; }
+.npo-setlist-num   { width: 24px; font-variant-numeric: tabular-nums; }
+.npo-setlist-title { font-weight: 500; }
+.npo-setlist-dur   {
+  font-size: 11px; color: var(--text3);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.npo-setlist-row.active .npo-setlist-dur { color: color-mix(in srgb, var(--accent) 70%, white); }
+
+/* Close button — bumped to corner-of-overlay, larger touch target.
+   Positioned below the titlebar (z-index 20001 vs npo's 200) so the
+   titlebar doesn't crop the top half of the button.
+   var(--title-h) = 38px, +12px gap = top ≈ 50px. */
+.npo-close {
+  top: calc(var(--title-h) + 12px);
+  right: 24px;
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Narrow-window guard — fall back to single-column stack so the layout
+   doesn't crush below 880px viewport width. Mirrors the v1.x behaviour. */
+@media (max-width: 879px) {
+  .npo-inner {
+    width: 380px;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "art"
+      "title"
+      "sub"
+      "progress"
+      "controls"
+      "extras"
+      "setlist";
+    gap: 14px 0;
+    padding: 24px 20px 28px;
+    justify-items: center;
+  }
+  .npo-art-wrap   { width: 260px; height: 260px; justify-self: center; }
+  .npo-art-wrap::after { display: none; }
+  .npo-title, .npo-sub { text-align: center; }
+  .npo-controls, .npo-extras { justify-content: center; }
+  .npo-volume { margin-left: 0; }
+  .npo-setlist {
+    height: auto;
+    min-height: 0;
+    max-height: 220px;
+    width: 100%;
+  }
+}
+
+/* ── v2.3 UI revamp Phase 2B — welcome page hero ─────────────────────────
+ *
+ * Bigger, more inviting first-impression. HTML unchanged; pure CSS
+ * overrides at the end of the stylesheet. The SOTD card becomes the
+ * visual centerpiece (it's the personalization payoff that earns the
+ * affinity work).
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Subtle accent-tinted backdrop wash at the top of the welcome view.
+   Switched from `justify-content: center` (parent default) to flex-start
+   so content stacks from the top instead of forcing all sections into
+   the viewport. Vertical scroll on overflow; horizontal hidden so the
+   ::before pseudo-element's negative inset can't trigger a scrollbar. */
+.welcome {
+  position: relative;
+  gap: 20px;
+  padding: 24px 16px 32px;
+  justify-content: flex-start;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.welcome::-webkit-scrollbar       { width: 6px; }
+.welcome::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.welcome::before {
+  /* Contain horizontally so the gradient stays inside the .welcome box
+     even with the radial spread, no horizontal overflow. */
+  inset: -40px 0 auto;
+}
+.welcome::before {
+  content: '';
+  position: absolute;
+  inset: -40px -100px auto;
+  height: 280px;
+  background: radial-gradient(
+    ellipse at top,
+    color-mix(in srgb, var(--accent) 12%, transparent) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+.welcome > * { position: relative; z-index: 1; }
+
+/* Logo bumped to 96px so it carries more weight as the visual anchor. */
+.welcome-logo {
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
+  box-shadow: 0 14px 44px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.welcome h2 {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin-bottom: 2px;
+}
+.welcome p {
+  font-size: 14px;
+  max-width: 440px;
+  color: var(--text2);
+  line-height: 1.6;
+}
+
+/* Action buttons: slightly larger, more spacing between them. */
+.welcome-actions {
+  gap: 10px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+.welcome-actions .action-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Show of the Day — the centerpiece. Wider, more padding, accent-tinted
+   gradient backdrop so it reads as a feature card, not a callout. */
+.welcome-sotd {
+  max-width: 720px;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--accent) 10%, var(--bg3)) 0%,
+      color-mix(in srgb, var(--accent) 4%,  var(--bg2)) 100%);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: 16px;
+  padding: 22px 26px;
+  margin-top: 12px;
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.25);
+}
+.welcome-sotd-header {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.welcome-sotd .welcome-otd-title {
+  font-size: 12px;
+  color: var(--text2);
+  letter-spacing: 0.08em;
+}
+
+.sotd-card {
+  text-align: left;
+  transition: transform 0.18s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.sotd-card:hover { transform: translateY(-2px); }
+.sotd-artist {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+.sotd-meta {
+  font-size: 14px;
+  color: var(--text2);
+  margin-bottom: 8px;
+}
+.sotd-rating {
+  font-size: 13px;
+  display: inline-block;
+  padding: 2px 8px;
+  background: color-mix(in srgb, #f5a623 18%, transparent);
+  border-radius: 999px;
+  margin-bottom: 4px;
+}
+.sotd-reason {
+  font-size: 10.5px;
+  padding: 3px 10px;
+  margin-bottom: 10px;
+}
+.sotd-play {
+  margin-top: 12px !important;
+  padding: 8px 18px !important;
+  font-weight: 700 !important;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Welcome card tabs — SOTD ↔ OTD switcher inside the same card.
+   The header used to show a static "🎵 Show of the Day" title; it
+   now hosts two tabs that toggle which content lives in #sotdContent. */
+.welcome-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.welcome-tab {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  border: 0;
+  color: var(--text3);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.14s ease, color 0.14s ease;
+  letter-spacing: 0.02em;
+}
+.welcome-tab:hover  { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.welcome-tab.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+@media (max-width: 720px) {
+  .welcome-tab { font-size: 11px; padding: 5px 10px; }
+}
+
+/* OTD list inside the SOTD card — compact rows, no per-row card
+   styling (the parent card already does that). */
+.otd-list {
+  max-height: 360px;
+  overflow-y: auto;
+  margin-top: 2px;
+}
+.otd-list::-webkit-scrollbar       { width: 5px; }
+.otd-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.otd-show-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 9px 12px !important;
+  margin-bottom: 3px !important;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid transparent;
+  transition: background 0.14s ease, transform 0.14s ease, border-color 0.14s ease;
+  cursor: pointer;
+}
+.otd-show-row:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  transform: translateX(3px);
+}
+.otd-artist { font-weight: 600; color: var(--text); }
+.otd-year   { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 700; }
+.otd-venue  { color: var(--text3); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Listening stats — pull the strip in line width-wise with the SOTD
+   and OTD cards. */
+.welcome-stats { max-width: 720px; width: 100%; }
+
+/* ── v2.3 UI revamp wrap-up — artist hero + set labels ───────────────────
+ *
+ * Closes the gap between the show-page hero (Phase 2A) and its sibling,
+ * the artist Years-page hero — they should feel like part of the same
+ * design language. Plus bumps the set labels above each track block so
+ * the structure of a multi-set show reads at a glance.
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Artist hero — mirror the cinematic treatment of .show-header so
+   landing on an artist's Years page feels like part of the same
+   poster-grade visual language. */
+.artist-hero {
+  margin: -20px -20px 24px;
+  padding: 56px 32px 32px;
+  background:
+    radial-gradient(
+      ellipse at top left,
+      color-mix(in srgb, var(--hero-bg, var(--bg3)) 85%, transparent) 0%,
+      transparent 60%
+    ),
+    linear-gradient(
+      to bottom,
+      var(--hero-bg, var(--bg3)) 0%,
+      color-mix(in srgb, var(--hero-bg, var(--bg3)) 35%, var(--bg)) 55%,
+      var(--bg) 100%
+    );
+  border-bottom: 1px solid color-mix(in srgb, var(--hero-bg, var(--border)) 25%, var(--border));
+  gap: 28px;
+  align-items: center;
+}
+.artist-hero::before {
+  /* Drop the original 0.22 single-colour overlay — the new gradient
+     already handles the tint and a second layer just darkens it. */
+  display: none;
+}
+.artist-hero-art {
+  width: 160px;
+  height: 160px;
+  box-shadow:
+    0 24px 56px rgba(0, 0, 0, 0.55),
+    0 4px 16px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.art-hero-init { font-size: 60px; }
+
+.artist-hero-label {
+  font-size: 12px;
+  color: var(--accent2);
+  opacity: 0.9;
+}
+.artist-hero-name {
+  font-size: 48px;
+  font-weight: 900;
+  letter-spacing: -0.015em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  margin-bottom: 10px;
+}
+.artist-hero-meta {
+  font-size: 14px;
+  color: var(--text);
+  opacity: 0.88;
+  margin-bottom: 18px;
+}
+
+/* Narrow-window fallback — stack the art above the info, smaller art. */
+@media (max-width: 720px) {
+  .artist-hero { flex-direction: column; align-items: flex-start; gap: 18px; padding: 36px 22px 24px; }
+  .artist-hero-art { width: 120px; height: 120px; }
+  .art-hero-init { font-size: 44px; }
+  .artist-hero-name { font-size: 32px; }
+}
+
+/* Set labels in track lists — bumped from utilitarian uppercase
+   muted-grey text to a proper chip-like heading so "Set 1" / "Set 2"
+   / "Encore" actually signal structure at a glance on multi-set shows. */
+.set-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  padding: 18px 0 8px;
+  margin: 6px 0 4px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.set-label::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.set-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--accent) 22%, transparent),
+    transparent
+  );
 }

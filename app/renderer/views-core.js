@@ -26,6 +26,7 @@ import {
 import {
   isAvailable as setlistFmAvailable,
   getSongPlayCount,
+  buildSetlistFmSongMap,
 } from './setlistfm.js';
 import { pickPersonalizedSotd, hasEnoughSignal } from './personalization.js';
 
@@ -519,17 +520,16 @@ export async function viewWelcome() {
       </div>` : ''}
       <div class="welcome-sotd" id="welcomeSotd">
         <div class="welcome-sotd-header">
-          <div class="welcome-otd-title">🎵 Show of the Day</div>
+          <div class="welcome-tabs" role="tablist">
+            <button class="welcome-tab active" data-welcome-tab="sotd"  role="tab" type="button">🎵 Show of the Day</button>
+            <button class="welcome-tab"        data-welcome-tab="otd"   role="tab" type="button">📅 On This Day · ${esc(label)}</button>
+          </div>
           <div class="sotd-toggle" id="sotdToggle" style="display:none">
             <button class="sotd-pill" data-mode="foryou">For You</button>
             <button class="sotd-pill" data-mode="global">Global</button>
           </div>
         </div>
         <div id="sotdContent"><div class="loading" style="height:50px;font-size:12px"><div class="spinner"></div></div></div>
-      </div>
-      <div class="welcome-otd">
-        <div class="welcome-otd-title">On This Day — ${esc(label)}</div>
-        <div id="welcomeOtd"><div class="loading" style="height:60px;font-size:12px"><div class="spinner"></div>Loading…</div></div>
       </div>
       <div class="welcome-stats" id="welcomeStats" style="display:none">
         <div class="welcome-stats-strip" id="welcomeStatsStrip"></div>
@@ -575,7 +575,49 @@ export async function viewWelcome() {
   // Both modes cache today's pick in localStorage under
   // `sotd-${mode}-${date}` so re-toggling is instant. The user's last
   // chosen mode is persisted in `sotd-mode`.
-  renderShowOfTheDay();
+  // Wire welcome-tab clicks (SOTD ↔ OTD switcher inside the same card).
+  // Persist the user's choice so navigating away and back keeps the
+  // tab they were last on.
+  const persistedWelcomeTab = localStorage.getItem('welcome-tab') === 'otd' ? 'otd' : 'sotd';
+  setWelcomeTab(persistedWelcomeTab, now);
+  document.querySelectorAll('.welcome-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.welcomeTab;
+      if (!tab) return;
+      localStorage.setItem('welcome-tab', tab);
+      setWelcomeTab(tab, now);
+    });
+  });
+}
+
+/* Show-of-the-Day / On-This-Day tab switcher — both views render into
+ * the same #sotdContent container inside the .welcome-sotd card. The
+ * For You / Global pill toggle is only relevant for the SOTD view, so
+ * it's hidden when the OTD tab is active. */
+let _otdCache = null;   // cached OTD payload keyed by month-day; lazy on first OTD-tab click
+
+function setWelcomeTab(tab, dateForOtd) {
+  document.querySelectorAll('.welcome-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.welcomeTab === tab));
+
+  const toggleEl = $('sotdToggle');
+  if (tab === 'sotd') {
+    // SOTD path: For You / Global toggle re-shown (if user has signal),
+    // and the pick re-rendered from cache for the active mode.
+    if (toggleEl && hasEnoughSignal()) toggleEl.style.display = '';
+    renderShowOfTheDay();
+  } else {
+    // OTD path: hide the For You/Global sub-toggle since it's a SOTD
+    // concept, then render the OTD list into the same container.
+    if (toggleEl) toggleEl.style.display = 'none';
+    renderOnThisDayInline(dateForOtd);
+  }
+}
+
+async function renderOnThisDayInline(dateRef) {
+  const target = $('sotdContent');
+  if (!target) return;
+  target.innerHTML = `<div class="loading" style="height:60px;font-size:12px"><div class="spinner"></div>Loading shows…</div>`;
 
   try {
     // Same race as SOTD — wait for state.artists so resolveShowArtist can
@@ -583,29 +625,37 @@ export async function viewWelcome() {
     for (let i = 0; i < 30 && !state.artists?.length; i++) {
       await new Promise(r => setTimeout(r, 100));
     }
-    const data  = await api.onDate(now.getMonth() + 1, now.getDate());
-    const shows = (data.shows ?? data ?? []).slice(0, 20);
+    const month = dateRef.getMonth() + 1;
+    const day   = dateRef.getDate();
+    const cacheKey = `${month}-${day}`;
+    if (!_otdCache || _otdCache.key !== cacheKey) {
+      const data = await api.onDate(month, day);
+      _otdCache = { key: cacheKey, shows: (data.shows ?? data ?? []).slice(0, 20) };
+    }
+    const shows = _otdCache.shows;
     if (!shows.length) {
-      $('welcomeOtd').innerHTML = `<div style="font-size:12px;color:var(--text3)">No shows found for today.</div>`;
+      target.innerHTML = `<div style="font-size:12px;color:var(--text3);padding:8px 4px">No shows found for this date.</div>`;
       return;
     }
-    safeInnerHTML($('welcomeOtd'), shows.map(s => {
+    safeInnerHTML(target, `<div class="otd-list">${shows.map(s => {
       const artist = resolveShowArtist(s);
       if (!artist?.slug) return ''; // skip shows we can't resolve to a slug
-      return `<div class="otd-show-row" data-slug="${esc(artist.slug)}" data-date="${esc(s.display_date)}" style="margin-bottom:5px;padding:8px 12px">
-        <div class="otd-artist" style="min-width:130px">${esc(artist.name)}</div>
+      return `<div class="otd-show-row" data-slug="${esc(artist.slug)}" data-date="${esc(s.display_date)}">
+        <div class="otd-artist">${esc(artist.name)}</div>
         <div class="otd-year">${esc((s.display_date||'').slice(0,4))}</div>
         <div class="otd-venue">${esc(s.venue?.name??'')}</div>
       </div>`;
-    }).join(''));
-    $('welcomeOtd').querySelectorAll('.otd-show-row').forEach(row =>
+    }).join('')}</div>`);
+    target.querySelectorAll('.otd-show-row').forEach(row =>
       row.addEventListener('click', () => {
         const slug = row.dataset.slug;
         const artist = state.artists.find(a => a.slug === slug) || { name: slug, slug };
         state.artist = artist;
         viewShow(artist, row.dataset.date);
       }));
-  } catch { $('welcomeOtd').innerHTML = `<div style="font-size:12px;color:var(--text3)">Could not load shows.</div>`; }
+  } catch {
+    target.innerHTML = `<div style="font-size:12px;color:var(--text3);padding:8px 4px">Could not load shows for this date.</div>`;
+  }
 }
 
 /* ── Global search ───────────────────────────────── */
@@ -1803,13 +1853,71 @@ export async function viewShow(artist, date) {
       { label: year,        onClick: () => viewShows(artist, year) },
       { label: show.display_date || date },
     ]);
-    renderShow(show, artist);
+    await renderShow(show, artist);
   } catch(e) { console.error('[views-core] viewShow', e); showError(e.message); }
 }
 
-export function renderShow(show, artist) {
+/* Render Relisten track list HTML, optionally using a setlist.fm-derived
+ * song-to-set map to override the source's set structure.
+ *
+ * Many Relisten sources ship as a single unnamed set (the taper dumped
+ * all tracks into one block — Cornell '77 is the canonical example: a
+ * "Set" with all 20 tracks). When we have setlist.fm data for the date,
+ * we flatten the source's tracks and walk the flat list assigning each
+ * track to whatever set setlist.fm says it belongs to, inserting
+ * <div class="set-label"> headers at set boundaries.
+ *
+ * Without setlist.fm data, we fall back to the source's own sets[] /
+ * set.name structure unchanged. */
+function renderRelistenTrackList(src, songToSet) {
+  const _row = (t, pos) => `
+    <div class="track-row" data-track-uuid="${esc(t.uuid)}" data-track-pos="${pos}">
+      <div class="track-num">${pos}</div>
+      <div class="track-name">${esc(t.title || 'Unknown')}</div>
+      <div class="track-dur">${fmt(t.duration)}</div>
+      <button class="track-stats-btn" data-title="${esc(t.title || '')}" title="Show occurrences">📊</button>
+      <button class="track-add-tape"  data-track-uuid="${esc(t.uuid)}" title="Add to tape">📼</button>
+    </div>`;
+
+  if (songToSet && songToSet.size > 0) {
+    // setlist.fm-driven set structure — flatten and re-walk.
+    const flat = (src.sets ?? []).flatMap(s => (s.tracks ?? []).filter(t => t.mp3_url));
+    const out = [];
+    let currentSet = null;
+    flat.forEach((t, i) => {
+      const key = normaliseSongTitle(t.title || '');
+      const trackSet = songToSet.get(key) ?? null;
+      if (trackSet && trackSet !== currentSet) {
+        out.push(`<div class="set-label">${esc(trackSet)}</div>`);
+        currentSet = trackSet;
+      }
+      out.push(_row(t, i + 1));
+    });
+    return out.join('');
+  }
+
+  // Fallback — Relisten's own sets[] / set.name (single set, multi-set
+  // with names like "Set 1" / "Set 2" / "Encore", etc.).
+  return (src.sets ?? []).map((set, si) => `
+    ${set.name ? `<div class="set-label">${esc(set.name)}</div>`
+      : (src.sets?.length ?? 0) > 1 ? `<div class="set-label">Set ${si+1}</div>` : ''}
+    ${(set.tracks ?? []).filter(t => t.mp3_url).map((t, ti) => _row(t, ti + 1)).join('')}
+  `).join('');
+}
+
+export async function renderShow(show, artist) {
   const sources   = show.sources ?? [];
   const fav       = store.isFav(artist.slug, show.display_date);
+
+  // Cross-reference setlist.fm for set delineation. Many Relisten sources
+  // ship as a single unnamed set ("Set" containing all 20 Cornell '77
+  // tracks, etc.) — setlist.fm has the actual Set 1 / Set 2 / Encore
+  // structure for these shows. Resolves to null on any failure (no cache
+  // for this artist, no matching setlist for the date, setlist.fm key
+  // missing) and the renderer falls back to the per-source set.name
+  // structure unchanged. */
+  const songToSet = await buildSetlistFmSongMap(artist, show.display_date)
+    .catch(() => null);
   const shareUrl  = `https://relisten.net/${artist.slug}/${show.display_date}`;
   const heroColor = artistColor(artist.name);
   const artHtml   = artist.image_url
@@ -2001,18 +2109,7 @@ export function renderShow(show, artist) {
       </div>
       ${meta}
       <div id="trackList">
-        ${(src.sets??[]).map((set,si)=>`
-          ${set.name?`<div class="set-label">${esc(set.name)}</div>`
-            :(src.sets?.length??0)>1?`<div class="set-label">Set ${si+1}</div>`:''}
-          ${(set.tracks??[]).filter(t=>t.mp3_url).map((t,ti)=>`
-            <div class="track-row" data-track-uuid="${esc(t.uuid)}" data-track-pos="${ti+1}">
-              <div class="track-num">${ti+1}</div>
-              <div class="track-name">${esc(t.title||'Unknown')}</div>
-              <div class="track-dur">${fmt(t.duration)}</div>
-              <button class="track-stats-btn" data-title="${esc(t.title||'')}" title="Show occurrences">📊</button>
-              <button class="track-add-tape" data-track-uuid="${esc(t.uuid)}" title="Add to tape">📼</button>
-            </div>`).join('')}
-        `).join('')}
+        ${renderRelistenTrackList(src, songToSet)}
       </div>`);
 
     if (state.queue[state.queueIdx]) {

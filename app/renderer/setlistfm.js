@@ -45,7 +45,7 @@
  * ────────────────────────────────────────────────────────────────────── */
 
 import localforage from './localforage-esm.js';
-import { aggregateSongCountsFromSetlists, normaliseSongTitle } from '../shared/helpers.js';
+import { aggregateSongCountsFromSetlists, normaliseSongTitle, nugsIsoDate } from '../shared/helpers.js';
 
 let API_KEY = '';
 
@@ -306,6 +306,48 @@ export async function getSongPlayCount(artist, songName, opts = {}) {
   const counts = await getArtistSongCounts(artist, opts);
   if (!counts) return null;
   return counts.get(normaliseSongTitle(songName)) ?? 0;
+}
+
+/** Look up the cached setlist.fm setlist for an artist on a specific date
+ *  and return a Map<normalised_song_title, set_label> derived from it.
+ *  Used by the show-page renderers (Relisten + Nugs) to insert set headers
+ *  into flat-or-weak-structure track lists.
+ *
+ *  Returns null cleanly when:
+ *    • setlist.fm key not configured
+ *    • no cached setlists for the artist (user hasn't opened a song-stats
+ *      card or Advanced Search for them)
+ *    • cache exists but no setlist matches the requested date
+ *    • date string can't be normalised
+ *
+ *  Date input is forgiving — accepts ISO YYYY-MM-DD (Relisten format) or
+ *  M/D/YYYY (Nugs format) by routing through `nugsIsoDate` for
+ *  normalisation. */
+export async function buildSetlistFmSongMap(artist, displayDate) {
+  if (!isAvailable() || !artist?.name) return null;
+  const isoDate = nugsIsoDate(displayDate);
+  if (!isoDate) return null;
+
+  let setlists;
+  try { setlists = await getArtistSetlists(artist); }
+  catch { return null; }
+  if (!Array.isArray(setlists) || !setlists.length) return null;
+
+  const setlist = setlists.find(sl => sl.date === isoDate);
+  if (!setlist?.sets?.length) return null;
+
+  const map = new Map();
+  setlist.sets.forEach(set => {
+    // Prefer the cached set label ('Set 1' / 'Set 2' / 'Encore' / 'Acoustic
+    // Set' etc., produced by normalizeSetlistForSearch above). Fall back to
+    // 'Encore' for encore-flagged sets that lost their label, else 'Set'.
+    const label = set.label || (set.encore ? 'Encore' : 'Set');
+    set.songs.forEach(song => {
+      const k = normaliseSongTitle(song.name);
+      if (k && !map.has(k)) map.set(k, label);
+    });
+  });
+  return map;
 }
 
 /* ── setlist.fm payload → search-friendly normalized shape ─────────────────

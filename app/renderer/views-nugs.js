@@ -2,6 +2,7 @@
 import { $, esc, fmt, artistColor, showToast, shuffle, confirmDialog, dlog, dinfo } from './utils.js';
 import { state, nav, settings, store, nugsAuth, nugsArtistStore, nugsReleasesCache, sidebarSource } from './state.js';
 import { nugsApi, nugsContainerImage } from './api.js';
+import { buildSetlistFmSongMap } from './setlistfm.js';
 // Pure helpers that don't touch DOM/state/network — live in shared/helpers.js
 // for unit testability. See test/helpers.test.js.
 import {
@@ -49,6 +50,59 @@ const NUGS_PINS_KEY = 'nugs_pinned_artists';
 function getNugsPins() {
   try { return JSON.parse(localStorage.getItem(NUGS_PINS_KEY) ?? '[]'); } catch { return []; }
 }
+
+/* ── Set delineation for Nugs track lists — via setlist.fm cross-reference ─
+ *
+ * Nugs's container API ships tracks as a flat array with no set / disc
+ * structure — unlike Relisten, which gives us sets[].name from the source
+ * payload. To add "Set 1 / Set 2 / Encore" headers on the Nugs side, we
+ * look up the corresponding setlist.fm setlist for the same artist + date
+ * (using the cache populated by v1.13's song-counts feature and v2.2's
+ * Advanced Search). When found, each Nugs track is mapped to whichever
+ * setlist.fm set it appears in.
+ *
+ * Coverage:
+ *   • Works when the user has previously scanned the artist's setlist.fm
+ *     data (i.e. opened a song-stats card or used Advanced Search for
+ *     that artist). For modern jam-band catalogs that's the norm.
+ *   • Falls back to a flat list with no set labels when the cache is
+ *     empty or no matching setlist exists for the date.
+ *   • Tracks that don't match any setlist.fm song (jam interludes,
+ *     unlogged segues) inherit the most-recently-emitted set label, so
+ *     a single missed match doesn't visually break the set boundary.
+ *
+ * Returns the rendered HTML string for the track list, with optional
+ * `<div class="set-label">` headers interleaved.
+ * ────────────────────────────────────────────────────────────────────── */
+async function renderNugsTracksWithSetLabels(normTracks, artist, displayDate) {
+  // Build the song-to-set map from setlist.fm (returns null gracefully on
+  // any failure path — no setlist.fm key, no cache, no matching date).
+  const songToSet = await buildSetlistFmSongMap(artist, displayDate);
+
+  const out = [];
+  let currentSet = null;
+  normTracks.forEach((t, i) => {
+    const key = normaliseSongTitle(t.title);
+    const trackSet = songToSet?.get(key) ?? null;
+    // Only emit a new header when we encounter a track that maps to a
+    // DIFFERENT set than the running set. Tracks that don't match any
+    // setlist.fm entry keep the current set context.
+    if (trackSet && trackSet !== currentSet) {
+      out.push(`<div class="set-label">${esc(trackSet)}</div>`);
+      currentSet = trackSet;
+    }
+    out.push(`
+      <div class="track-row" data-track-uuid="${esc(t.uuid)}" data-track-pos="${i + 1}">
+        <div class="track-num">${i + 1}</div>
+        <div class="track-name">${esc(t.title)}${t._nugs_video ? ' 🎬' : ''}</div>
+        <div class="track-dur">${fmt(t.duration)}</div>
+      </div>`);
+  });
+  return out.join('');
+}
+
+/* buildSetlistFmSongMap was moved to setlistfm.js (v2.3) so the Relisten
+ * show-page renderer can use the same helper. Kept as an import above. */
 
 export async function viewNugsWelcome() {
   const ci = $('nugsContentInner');
@@ -1173,12 +1227,7 @@ export async function nugsViewRelease(artist, containerId) {
         </div>
       </div>
       <div id="nugsTrackList">
-        ${normTracks.map((t, i) => `
-          <div class="track-row" data-track-uuid="${esc(t.uuid)}" data-track-pos="${i + 1}">
-            <div class="track-num">${i + 1}</div>
-            <div class="track-name">${esc(t.title)}${t._nugs_video ? ' 🎬' : ''}</div>
-            <div class="track-dur">${fmt(t.duration)}</div>
-          </div>`).join('')}
+        ${await renderNugsTracksWithSetLabels(normTracks, artist, displayDate)}
       </div>`;
     fadeIn();
 
