@@ -255,9 +255,16 @@ body {
   display: flex;
   gap: 3px;
 }
+/* Stacked icon-above-label layout (v2.3 UI revamp Phase 1).
+   The wider .nav-btn surface lets the icon breathe while keeping the
+   2-row horizontal grid that's identity-specific to Days Between. */
 .nav-btn {
   flex: 1;
-  padding: 5px 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 2px 6px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text3);
@@ -277,12 +284,29 @@ body {
   box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 15%, transparent), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 
+/* Icon container — fixed slot above the label. SVG stroke inherits
+   currentColor so it picks up active / hover state automatically. */
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  opacity: 0.85;
+}
+.nav-icon svg { width: 16px; height: 16px; display: block; }
+.nav-btn:hover  .nav-icon { opacity: 1; }
+.nav-btn.active .nav-icon { opacity: 1; }
+.nav-label { display: inline-block; line-height: 1; }
+
 /* Feature row — single full-width button for Advanced Search.
-   Slightly bigger and accent-tinted so it reads as a premium entry point. */
+   Inline layout (icon LEFT of label) instead of stacked, since the
+   button is full-width and the label is longer. */
 .nav-row-feature { margin-top: 4px; }
 .nav-btn-feature {
+  flex-direction: row;
+  gap: 6px;
   font-size: 10.5px;
-  padding: 7px 4px;
+  padding: 7px 8px;
   background: color-mix(in srgb, var(--accent) 6%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--text2);
@@ -292,6 +316,8 @@ body {
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
+.nav-btn-feature .nav-icon     { width: 14px; height: 14px; opacity: 1; }
+.nav-btn-feature .nav-icon svg { width: 14px; height: 14px; }
 
 .artist-list {
   flex: 1;
