@@ -427,11 +427,21 @@ async function onArtistChange() {
     return;
   }
 
+  // Supersede guard. The user can pick a different artist while this
+  // call is still mid-scan; every async boundary below has to bail if
+  // _formState.artistSlug has moved on, otherwise the slow scan's
+  // progress / completion overwrites the new artist's status row and
+  // re-enables its form prematurely. Capture the slug we started with
+  // and check it at each await point.
+  const mySlug = slug;
+  const stillCurrent = () => _formState.artistSlug === mySlug;
+
   const artist = state.artists.find(a => a.slug === slug);
   if (!artist) return;
 
   // Check cache first
   const cached = await getArtistSetlists(artist).catch(() => null);
+  if (!stillCurrent()) return;
   if (cached && cached.length) {
     // Ready — enable everything and build the autocomplete suggestion lists.
     _scanStatus.set(slug, 'ready');
@@ -454,6 +464,10 @@ async function onArtistChange() {
     let lastUpdate = 0;
     await getArtistSongCounts(artist, {
       onProgress: (scanned, total) => {
+        // Skip progress updates whose target row has been replaced by a
+        // later artist pick. Without this guard, an old scan keeps
+        // updating the NEW artist's status row.
+        if (!stillCurrent()) return;
         const now = Date.now();
         if (now - lastUpdate < 150) return;
         lastUpdate = now;
@@ -461,8 +475,10 @@ async function onArtistChange() {
         if (countEl) countEl.textContent = `${scanned}/${total}`;
       },
     });
+    if (!stillCurrent()) return;
     // Scan complete — re-check cache
     const freshCache = await getArtistSetlists(artist);
+    if (!stillCurrent()) return;
     if (!freshCache || !freshCache.length) {
       _scanStatus.set(slug, 'unavailable');
       statusEl.innerHTML = `<span class="adv-scan-unavailable">No setlist.fm data available for ${esc(artist.name)}.</span>`;
@@ -474,6 +490,7 @@ async function onArtistChange() {
     searchBtn.disabled = false;
     statusEl.innerHTML = `<span class="adv-scan-ready">✓ ${freshCache.length.toLocaleString()} setlists cached for ${esc(artist.name)} — ready to search</span>`;
   } catch (err) {
+    if (!stillCurrent()) return;
     _scanStatus.set(slug, 'unavailable');
     statusEl.innerHTML = `<span class="adv-scan-unavailable">Couldn't reach setlist.fm — try again later. (${esc(err.message || 'unknown error')})</span>`;
   }
@@ -654,19 +671,45 @@ async function tryNugsLookup(artistName, isoDate) {
   if (!partial) return { ok: false, error: 'artist-not-found' };
 
   // Step 2: fetch (or reuse cached) Nugs catalog for that artist.
-  let containers = _nugsCatalogCache.get(String(partial.artistID));
-  if (!containers) {
-    containers = [];
-    let offset = 1;
-    const SAFETY = 20; // 20 pages × 500/page = 10k containers — way more than any real artist
-    for (let i = 0; i < SAFETY; i++) {
-      const data = await nugsApi.catalog(partial.artistID, offset);
-      const batch = data?.Response?.containers ?? [];
-      containers = containers.concat(batch);
-      if (batch.length < nugsApi.CATALOG_PAGE_SIZE) break;
-      offset += nugsApi.CATALOG_PAGE_SIZE;
+  // Cache stores either a resolved containers[] OR an in-flight Promise.
+  // The Promise stash dedupes rapid sibling clicks on "🎤 Nugs" buttons
+  // for results from the same artist — without it, each click would
+  // independently page through the entire catalog (10-30s × N for Dead),
+  // wastefully burning Nugs rate-budget. Whoever arrives second awaits
+  // the first caller's fetch and gets the same containers back.
+  const artistKey = String(partial.artistID);
+  let cached = _nugsCatalogCache.get(artistKey);
+  let containers;
+  if (Array.isArray(cached)) {
+    containers = cached;
+  } else if (cached && typeof cached.then === 'function') {
+    containers = await cached;
+  } else {
+    const fetchPromise = (async () => {
+      const all = [];
+      let offset = 1;
+      const SAFETY = 20; // 20 pages × 500/page = 10k containers — way more than any real artist
+      for (let i = 0; i < SAFETY; i++) {
+        const data = await nugsApi.catalog(partial.artistID, offset);
+        const batch = data?.Response?.containers ?? [];
+        all.push(...batch);
+        if (batch.length < nugsApi.CATALOG_PAGE_SIZE) break;
+        offset += nugsApi.CATALOG_PAGE_SIZE;
+      }
+      _nugsCatalogCache.set(artistKey, all);
+      return all;
+    })();
+    _nugsCatalogCache.set(artistKey, fetchPromise);
+    try {
+      containers = await fetchPromise;
+    } catch (err) {
+      // On failure clear the cache entry so the next click can retry
+      // instead of awaiting a permanently-rejected promise.
+      if (_nugsCatalogCache.get(artistKey) === fetchPromise) {
+        _nugsCatalogCache.delete(artistKey);
+      }
+      throw err;
     }
-    _nugsCatalogCache.set(String(partial.artistID), containers);
   }
 
   // Step 3: find a container whose performance date matches.

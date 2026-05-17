@@ -3,6 +3,56 @@
 Per-release notes for Days Between, newest first. The README's
 [Version History](./README.md#version-history) section links here.
 
+## v2.2.3 — Delta-audit fixes
+
+Four targeted bug fixes from a structural review of everything added
+between v2.0.0 and v2.2.2. No new features; no schema or API changes.
+Each fix prevents a different latent failure that wouldn't surface
+under normal usage but would absolutely show up in a user report.
+
+1. **"Play Best Recording" now agrees with the source picker.** The
+   button at the top of every show page used a deprecated
+   `s.is_soundboard` shortcut to pick a source, while the picker
+   itself was upgraded in v2.1 to use the smarter
+   `pickPreferredSourceIdx`. Two paths could disagree on the same
+   show — open a 1977 Dead show with "Prefer Soundboard" off, the
+   picker correctly auto-selected the top-rated AUD, but Play Best
+   would pick a Matrix (because Matrix recordings have
+   `is_soundboard: true` since they include a board feed). Now both
+   route through the same picker, so the visible auto-selection and
+   the Play Best result match.
+
+2. **setlist.fm cache "upgraded" guard requires non-empty data.**
+   The v2.2.0 migration gate (`Array.isArray(cached.setlists)`)
+   counted an empty array as "upgraded." If `normalizeSetlistForSearch`
+   ever produced zero valid entries for an artist — every setlist
+   malformed, date-format change at setlist.fm, etc. — the cache
+   would be permanently locked in a stale state with no recovery
+   until the 7-day TTL or a manual forceRefresh. Now requires
+   `setlists.length > 0` so a bad normalize pass triggers a re-fetch
+   on the next use.
+
+3. **Advanced Search artist-picker supersede guard.** Picking artist
+   A → mid-scan → picking artist B previously left A's scan running
+   in the background; its progress callback kept writing into B's
+   status row and its completion overwrote B's "ready" state. Added
+   a captured-slug check at every async boundary so a superseded
+   scan bails silently. Same pattern v1.9 introduced for the Nugs
+   welcome rows.
+
+4. **Nugs catalog fetch in-flight dedupe.** Clicking "🎤 Nugs" on
+   several Advanced Search results in quick succession used to kick
+   off duplicate paginated catalog fetches (10-30s each for Dead's
+   1,200+ containers), independently writing to the same cache key
+   and burning Nugs rate budget. Now the cache stashes the in-flight
+   Promise so concurrent callers await the same fetch and get the
+   same containers back. Cleared on failure so a transient error
+   doesn't leave a permanently-rejected Promise behind.
+
+Existing 130 unit tests still pass; no new tests added. All four
+changes are at call sites or wrapper layers, not in helpers that
+need test coverage.
+
 ## v2.2.2 — Configurable downloads folder + source-switch no-pause
 
 Two tweaks driven by user feedback.

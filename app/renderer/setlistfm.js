@@ -236,7 +236,13 @@ export async function getArtistSongCounts(artist, opts = {}) {
     // cache picks up the normalized setlists Advanced Search needs. This is
     // a one-time migration cost per artist per user; subsequent reads hit
     // the upgraded cache and short-circuit normally.
-    const isUpgraded = Array.isArray(cached?.setlists);
+    //
+    // `setlists.length > 0` is the important guard: a previous normalize
+    // pass that produced ZERO valid setlists (every entry malformed —
+    // setlist.fm date-format change, etc.) would otherwise mark the cache
+    // permanently "upgraded" with no data, locking Advanced Search out of
+    // that artist until the TTL expires or the user runs forceRefresh.
+    const isUpgraded = Array.isArray(cached?.setlists) && cached.setlists.length > 0;
     if (cached?.counts && isUpgraded) {
       // Rehydrate Map from the persisted plain object.
       const map = new Map();

@@ -2073,7 +2073,15 @@ export function renderShow(show, artist) {
   const preferSoundboard = settings.getKey('preferSoundboard', false);
   renderSourceArea(pickPreferredSourceIdx(sources, { preferSoundboard }));
   $('btnPlayAll').addEventListener('click', () => {
-    const best = sources.find(s => s.is_soundboard) ?? sources[0];
+    // Match whichever source the picker auto-selected at the top of the
+    // page. The previous `sources.find(s => s.is_soundboard)` shortcut
+    // was deprecated by the v2.1 source picker because is_soundboard is
+    // true for Matrix recordings too — so Play Best could pick a Matrix
+    // when the user with "Prefer Soundboard" off was looking at a
+    // higher-rated AUD in the picker. Routing through the same
+    // pickPreferredSourceIdx keeps the two consistent.
+    const idx  = pickPreferredSourceIdx(sources, { preferSoundboard });
+    const best = sources[idx] ?? sources[0];
     if (best) player.playSource(best);
   });
 
