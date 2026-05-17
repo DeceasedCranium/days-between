@@ -53,6 +53,117 @@ Existing 130 unit tests still pass; no new tests added. All four
 changes are at call sites or wrapper layers, not in helpers that
 need test coverage.
 
+## v2.3.0 — UI revamp
+
+A focused visual pass across the entire app. Pure UI work — no API
+changes, no schema changes, no new IPC. Built on a feature branch
+(`ui-revamp`) with six per-phase commits so individual pieces can be
+audited or reverted in isolation. Each phase landed independently
+and was validated in the user's daily install before the next began.
+
+**Phase 1 — Sidebar icons.** Every nav button gets an inline Lucide
+icon stacked above its label — users / calendar-days / trending-up /
+cassette-tape on the top row, heart / clock / bookmark / bar-chart-3
+on the second, search on the Advanced Search feature row. Icons
+inherit `currentColor` stroke so they pick up the accent in the
+active state and brighten on hover. No new dependencies — SVGs are
+inlined verbatim from lucide.dev (ISC licence).
+
+**Phase 2C — Hover & transition vocabulary.** Show cards lift on
+hover with spring easing and an accent-tinted shadow. Show rows
+(list mode) slide right with a coloured accent bar appearing on
+the left edge. Track rows get a faint accent pseudo-bar on hover,
+solid on the currently-playing track. Primary CTAs get a glowing
+accent shadow. Source chips lift on hover; active chip gets a soft
+glow. Real `focus-visible` rings on every clickable surface for
+keyboard nav. Page transitions strengthened from 240ms slide to
+280ms slide-plus-scale.
+
+**Phase 2A — Show page cinematic hero.** The existing
+`.show-header` is now a real poster: taller padding,
+radial-highlight + vertical gradient backdrop tinted by the
+artist's hash colour, 200×200 artwork (was 160) with triple-layer
+shadow + inner highlight ring, 36px date heading with tightened
+letter-spacing, refined tag pills with backdrop-blurred glass
+background plus accent-tinted green / gold variants for the
+Soundboard / rating tags.
+
+**Phase 2 (NPO) — Cinematic Now Playing overlay.** The headline
+visual lift. Refactored the 380px centered-column layout into a
+wide two-column grid (≥880px viewport): art + track info on the
+left, full-height setlist column on the right. Backdrop intensity
+significantly stronger — track-color drives a blurred backdrop
+with two layered radial highlights and a soft vignette. 340×340
+artwork with triple-layer shadow including a track-color tinted
+glow plus a soft "floor reflection" blur underneath. Track title
+poster-sized at 36px with a faint track-color text-shadow. Setlist
+is now a glass-panel full-height column on the right with
+tabular-numeric durations; active row gets an accent-tinted
+background. Primary play button gets the accent-glow treatment.
+Narrow-window guard (<880px) falls back to the v2.2 single-column
+stack.
+
+**Phase 2B — Welcome page tabbed feature card.** Stronger hero:
+96px logo with accent-tinted glow, 32px heading with tightened
+letter-spacing, subtle accent-tinted radial wash at the top of the
+view. Show of the Day and On This Day consolidated into a single
+tabbed card — header hosts two pill-tabs (🎵 Show of the Day /
+📅 On This Day · date), tab selection persists in localStorage.
+OTD list lazy-fetched on first tab click, cached in-memory by
+month-day. For You / Global sub-toggle only visible when the SOTD
+tab is active. Welcome view now scrolls vertically when content
+overflows so smaller windows don't clip the bottom.
+
+**Phase 2 wrap-up — Artist hero + Set labels + Cross-source
+setlist.fm-driven sets.** Artist Years page gets the same cinematic
+treatment as show pages — gradient backdrop, 160px circular
+artwork with triple-layer shadow, 48px artist name. Set labels in
+track lists bumped from utilitarian muted-grey 10px to a proper
+chip-like accent heading with a short bar on the left and a faint
+gradient line extending to the right.
+
+The biggest behavioural change in v2.3 is in this last phase:
+**a new `buildSetlistFmSongMap(artist, displayDate)` helper that
+both the Relisten and Nugs show-page renderers use to insert real
+set headers based on cached setlist.fm data.** Many Relisten sources
+ship as a single unnamed "Set" with everything crammed in (Cornell
+'77 is the canonical example — 20 tracks, one "Set" label, no
+actual Set 1 / Set 2 / Encore delineation). Nugs ships completely
+flat with no set structure at all. The cross-reference resolves
+both by reading the setlist.fm setlist for the date and using its
+sets to inject / override structure.
+
+Coverage:
+- Works for any artist whose song-stats card has been opened, or
+  whose Advanced Search has been used — those flows populate the
+  setlist.fm cache. Modern jam-band catalogs are the sweet spot.
+- Falls back to a flat list with no labels when no cache or no
+  matching date exists. Status quo, no regression.
+- Tracks that don't match any setlist.fm song (jam interludes,
+  unlogged segues) inherit the running set context, so a single
+  unmatched song doesn't visually break the set boundary.
+
+Per-source delineation logic preserved as the fallback: when no
+setlist.fm map is available, the Relisten side uses
+`source.sets[].name` like before, and the Nugs side stays flat.
+
+**130 unit tests still pass.** No new tests — UI work doesn't need
+helper-level coverage. The one new pure-ish addition
+(`buildSetlistFmSongMap`) is a thin orchestration wrapper around
+already-tested helpers (`normaliseSongTitle`, `nugsIsoDate`,
+`getArtistSetlists`).
+
+**Files touched** (~1,400 LOC across the branch):
+- `app/renderer/style.css` — bulk of the work, all overrides
+  appended at the bottom of the stylesheet for surgical revert
+- `app/renderer/index.html` — sidebar icons, welcome-tab markup
+- `app/renderer/views-core.js` — async `renderShow`, new
+  `renderRelistenTrackList` helper, welcome-tab switcher
+- `app/renderer/views-nugs.js` — `renderNugsTracksWithSetLabels`,
+  imports the shared map builder
+- `app/renderer/setlistfm.js` — new exported
+  `buildSetlistFmSongMap` helper
+
 ## v2.2.2 — Configurable downloads folder + source-switch no-pause
 
 Two tweaks driven by user feedback.
